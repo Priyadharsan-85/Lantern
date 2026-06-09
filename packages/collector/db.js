@@ -1,11 +1,11 @@
 const { Pool } = require('pg');
 
 const pool = new Pool({
-  host:     'localhost',
-  port:     5432,
-  database: 'lantern',
-  user:     'postgres',
-  password: 'admin123',  // change this if your password is different
+  host: process.env.PGHOST || 'localhost',
+  port: Number(process.env.PGPORT) || 5432,
+  database: process.env.PGDATABASE || 'lantern',
+  user: process.env.PGUSER || 'postgres',
+  password: process.env.PGPASSWORD || '',
 });
 
 pool.on('error', (err) => {
