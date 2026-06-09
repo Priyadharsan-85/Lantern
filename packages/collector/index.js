@@ -1,90 +1,67 @@
-// Milestone 1 collector: in-memory, logs a waterfall view to console
-// In Milestone 2 we replace this with ClickHouse storage
+const express  = require('express');
+const { setupStream, pushSpans } = require('./queue');
+const { startProcessor }         = require('./processor');
+const { getTraces, getTraceById } = require('./db');
 
-const express = require('express');
 const app = express();
 app.use(express.json());
 
-// store spans grouped by traceId
-const traces = new Map();   // traceId → Span[]
-
 // ── receive spans from SDK ────────────────────────────────────────────────
-app.post('/spans', (req, res) => {
+app.post('/spans', async (req, res) => {
   const { spans } = req.body;
   if (!Array.isArray(spans)) return res.status(400).json({ error: 'expected spans array' });
 
-  for (const span of spans) {
-    if (!traces.has(span.traceId)) traces.set(span.traceId, []);
-    traces.get(span.traceId).push(span);
+  // push to Redis Stream — processor writes to PostgreSQL
+  await pushSpans(spans);
 
-    // print waterfall as spans arrive
-    printSpan(span);
-  }
-
-  // once a trace has multiple spans, render the full waterfall
-  const traceSpans = traces.get(spans[0]?.traceId) || [];
-  if (traceSpans.length > 1) printWaterfall(traceSpans[0].traceId);
+  // still print waterfall to console for dev visibility
+  printWaterfall(spans);
 
   res.json({ received: spans.length });
 });
 
-// ── get all traces (for dashboard later) ─────────────────────────────────
-app.get('/traces', (req, res) => {
-  const result = [];
-  for (const [traceId, spans] of traces) {
-    const root = spans.find(s => !s.parentSpanId) || spans[0];
-    result.push({
-      traceId,
-      rootSpan:   root?.name,
-      service:    root?.serviceName,
-      duration:   root?.duration,
-      spanCount:  spans.length,
-      hasError:   spans.some(s => s.status === 'error'),
-      startTime:  root?.startTime,
-    });
+// ── query endpoints for dashboard (Milestone 3) ───────────────────────────
+app.get('/traces', async (req, res) => {
+  try {
+    const traces = await getTraces(50);
+    res.json(traces);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-  res.json(result.sort((a, b) => b.startTime - a.startTime));
 });
 
-// ── get single trace detail ───────────────────────────────────────────────
-app.get('/traces/:traceId', (req, res) => {
-  const spans = traces.get(req.params.traceId);
-  if (!spans) return res.status(404).json({ error: 'trace not found' });
-  res.json(buildTree(spans));
+app.get('/traces/:traceId', async (req, res) => {
+  try {
+    const spans = await getTraceById(req.params.traceId);
+    if (!spans.length) return res.status(404).json({ error: 'trace not found' });
+    res.json(spans);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// ── console waterfall renderer ────────────────────────────────────────────
-function printSpan(span) {
-  const status = span.status === 'error' ? '❌' : '✅';
-  const dur    = span.duration != null ? `${span.duration}ms` : 'in progress';
-  console.log(`${status} [${span.serviceName}] ${span.name} — ${dur}`);
-}
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
 
-function printWaterfall(traceId) {
-  const spans = traces.get(traceId);
-  if (!spans || spans.length < 2) return;
+// ── console waterfall (kept from Milestone 1) ─────────────────────────────
+function printWaterfall(spans) {
+  if (!spans.length) return;
+  const traceId  = spans[0].traceId;
+  const sorted   = [...spans].sort((a, b) => a.startTime - b.startTime);
+  const traceStart = sorted[0].startTime;
+  const totalDur   = Math.max(...spans.map(s => s.duration || 1));
 
-  const root      = spans.find(s => !s.parentSpanId) || spans[0];
-  const traceStart = root?.startTime || spans[0].startTime;
-  const traceEnd   = Math.max(...spans.map(s => s.endTime || Date.now()));
-  const totalDur   = traceEnd - traceStart;
-
-  console.log('\n' + '─'.repeat(70));
+  console.log('\n' + '─'.repeat(60));
   console.log(`TRACE  ${traceId}`);
-  console.log(`Total  ${totalDur}ms   Spans: ${spans.length}`);
-  console.log('─'.repeat(70));
-
-  // sort by start time, render indent based on depth
-  const sorted = [...spans].sort((a, b) => a.startTime - b.startTime);
+  console.log(`Spans: ${spans.length}`);
+  console.log('─'.repeat(60));
   for (const span of sorted) {
     const indent = span.parentSpanId ? '  └─ ' : '';
     const bar    = renderBar(span, traceStart, totalDur);
-    const status = span.status === 'error' ? ' ❌' : '';
-    const dur    = span.duration != null ? `${span.duration}ms` : '?ms';
+    const status = span.status === 'error' ? ' ❌' : ' ✅';
     console.log(`${indent}${span.serviceName}.${span.name}${status}`);
-    console.log(`   ${bar} ${dur}`);
+    console.log(`   ${bar} ${span.duration}ms`);
   }
-  console.log('─'.repeat(70) + '\n');
+  console.log('─'.repeat(60) + '\n');
 }
 
 function renderBar(span, traceStart, totalDur) {
@@ -96,23 +73,18 @@ function renderBar(span, traceStart, totalDur) {
   return ' '.repeat(offset) + '█'.repeat(fill);
 }
 
-// build parent-child tree structure
-function buildTree(spans) {
-  const byId = Object.fromEntries(spans.map(s => [s.spanId, { ...s, children: [] }]));
-  const roots = [];
-  for (const span of Object.values(byId)) {
-    if (span.parentSpanId && byId[span.parentSpanId]) {
-      byId[span.parentSpanId].children.push(span);
-    } else {
-      roots.push(span);
-    }
-  }
-  return roots;
+// ── startup ───────────────────────────────────────────────────────────────
+async function start() {
+  await setupStream();
+  startProcessor();
+
+  app.listen(4000, () => {
+    console.log('╔══════════════════════════════════════╗');
+    console.log('║   Lantern — Collector v0.2           ║');
+    console.log('║   Listening on :4000                 ║');
+    console.log('║   Storage: PostgreSQL + Redis        ║');
+    console.log('╚══════════════════════════════════════╝\n');
+  });
 }
 
-app.listen(4000, () => {
-  console.log('╔══════════════════════════════════════╗');
-  console.log('║   Lantern — Collector v0.1  ║');
-  console.log('║   Listening on :4000                 ║');
-  console.log('╚══════════════════════════════════════╝\n');
-});
+start();
