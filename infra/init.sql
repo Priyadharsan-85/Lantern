@@ -12,7 +12,6 @@ CREATE TABLE IF NOT EXISTS spans (
   logs           JSONB DEFAULT '[]',
   created_at     TIMESTAMP DEFAULT NOW()
 );
-
 CREATE INDEX IF NOT EXISTS idx_trace_id ON spans(trace_id);
 CREATE INDEX IF NOT EXISTS idx_service_name ON spans(service_name);
 CREATE INDEX IF NOT EXISTS idx_status ON spans(status);
