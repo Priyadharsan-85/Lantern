@@ -1,11 +1,3 @@
-// Run this after starting all 4 services:
-//
-//   Tab 1: node packages\collector\index.js
-//   Tab 2: node services\payment-service\index.js
-//   Tab 3: node services\order-service\index.js
-//   Tab 4: node services\api-gateway\index.js
-//   Tab 5: node test-trace.js
-
 const axios = require('axios');
 
 async function runTest() {
