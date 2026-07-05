@@ -1,3 +1,4 @@
+require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env') });
 const express  = require('express');
 const { setupStream, pushSpans } = require('./queue');
 const { startProcessor }         = require('./processor');
@@ -5,6 +6,17 @@ const { getTraces, getTraceById } = require('./db');
 
 const app = express();
 app.use(express.json());
+
+// Enable CORS for dashboard
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
 
 // ── receive spans from SDK ────────────────────────────────────────────────
 app.post('/spans', async (req, res) => {

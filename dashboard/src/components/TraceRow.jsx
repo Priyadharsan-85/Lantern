@@ -1,5 +1,3 @@
-import { ArrowUpRight } from 'lucide-react';
-
 export default function TraceRow({ trace, maxDuration, onSelect }) {
   const duration = Number(trace.total_duration) || 0;
   const widthPct = Math.max(4, Math.min(100, (duration / maxDuration) * 100));
@@ -38,7 +36,10 @@ export default function TraceRow({ trace, maxDuration, onSelect }) {
         <span className="trace-row__spans">{trace.span_count} spans</span>
       </div>
 
-      <ArrowUpRight size={14} className="trace-row__arrow" strokeWidth={2} />
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="trace-row__arrow" style={{marginLeft: 'auto'}}>
+        <line x1="7" y1="17" x2="17" y2="7"></line>
+        <polyline points="7 7 17 7 17 17"></polyline>
+      </svg>
     </button>
   );
 }

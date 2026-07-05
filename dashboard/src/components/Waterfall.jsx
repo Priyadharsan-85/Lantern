@@ -1,5 +1,3 @@
-import { X, AlertTriangle, Clock } from 'lucide-react';
-
 export default function Waterfall({ spans, onClose }) {
   if (!spans || spans.length === 0) return null;
 
@@ -21,10 +19,21 @@ export default function Waterfall({ spans, onClose }) {
             <div className="waterfall-header__id">{spans[0].trace_id}</div>
           </div>
           <div className="waterfall-header__stats">
-            <span><Clock size={13} /> {totalDur}ms total</span>
+            <span>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{display: 'inline', marginRight: '4px'}}>
+                <circle cx="12" cy="12" r="10"></circle>
+                <polyline points="12 6 12 12 16 14"></polyline>
+              </svg>
+              {totalDur}ms total
+            </span>
             <span>{spans.length} spans</span>
           </div>
-          <button className="waterfall-close" onClick={onClose}><X size={18} /></button>
+          <button className="waterfall-close" onClick={onClose}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
         </header>
 
         <div className="waterfall-ruler">
@@ -48,7 +57,13 @@ export default function Waterfall({ spans, onClose }) {
                   <span className={`span-row__dot ${isError ? 'is-error' : ''}`} />
                   <span className="span-row__service">{span.service_name}</span>
                   <span className="span-row__name">{span.name}</span>
-                  {isError && <AlertTriangle size={11} className="span-row__warn" />}
+                  {isError && (
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{display: 'inline', marginLeft: 'auto'}}>
+                      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3.05h16.94a2 2 0 0 0 1.71-3.05L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                      <line x1="12" y1="9" x2="12" y2="13"></line>
+                      <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                    </svg>
+                  )}
                 </div>
                 <div className="span-row__track">
                   <div
