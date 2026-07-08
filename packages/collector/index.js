@@ -1,5 +1,6 @@
 require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env') });
 const express  = require('express');
+const promClient = require('prom-client');
 const { setupStream, pushSpans } = require('./queue');
 const { startProcessor }         = require('./processor');
 const { getTraces, getTraceById } = require('./db');
@@ -18,18 +19,49 @@ app.use((req, res, next) => {
   next();
 });
 
+// ── Prometheus metrics ──────────────────────────────────────────────────
+const spansIngested = new promClient.Counter({
+  name: 'lantern_spans_ingested_total',
+  help: 'Total spans received',
+  labelNames: ['status']
+});
+
+const queueDepth = new promClient.Gauge({
+  name: 'lantern_queue_depth',
+  help: 'Current span queue size'
+});
+
+const processorLatency = new promClient.Histogram({
+  name: 'lantern_processor_latency_ms',
+  help: 'Span processing latency in milliseconds',
+  buckets: [10, 50, 100, 500, 1000]
+});
+
+app.get('/metrics', (req, res) => {
+  res.set('Content-Type', promClient.register.contentType);
+  res.end(promClient.register.metrics());
+});
+
 // ── receive spans from SDK ────────────────────────────────────────────────
 app.post('/spans', async (req, res) => {
   const { spans } = req.body;
-  if (!Array.isArray(spans)) return res.status(400).json({ error: 'expected spans array' });
+  if (!Array.isArray(spans)) {
+    return res.status(400).json({ error: 'expected spans array' });
+  }
 
-  // push to Redis Stream — processor writes to PostgreSQL
-  await pushSpans(spans);
+  spansIngested.inc({ status: 'received' }, spans.length);
+  queueDepth.set(spans.length);
 
-  // still print waterfall to console for dev visibility
-  printWaterfall(spans);
-
-  res.json({ received: spans.length });
+  try {
+    await pushSpans(spans);
+    printWaterfall(spans);
+    spansIngested.inc({ status: 'queued' }, spans.length);
+    res.json({ received: spans.length });
+  } catch (err) {
+    console.error('[Collector] Failed to queue spans:', err.message);
+    spansIngested.inc({ status: 'failed' }, spans.length);
+    res.status(500).json({ error: 'Failed to queue spans' });
+  }
 });
 
 // ── query endpoints for dashboard (Milestone 3) ───────────────────────────
@@ -38,6 +70,7 @@ app.get('/traces', async (req, res) => {
     const traces = await getTraces(50);
     res.json(traces);
   } catch (err) {
+    console.error('[Collector] Failed to fetch traces:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -48,11 +81,19 @@ app.get('/traces/:traceId', async (req, res) => {
     if (!spans.length) return res.status(404).json({ error: 'trace not found' });
     res.json(spans);
   } catch (err) {
+    console.error('[Collector] Failed to fetch trace detail:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-app.get('/health', (req, res) => res.json({ status: 'ok' }));
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok',
+    service: 'collector',
+    version: '0.2',
+    timestamp: new Date().toISOString()
+  });
+});
 
 // ── console waterfall (kept from Milestone 1) ─────────────────────────────
 function printWaterfall(spans) {
@@ -87,16 +128,32 @@ function renderBar(span, traceStart, totalDur) {
 
 // ── startup ───────────────────────────────────────────────────────────────
 async function start() {
-  await setupStream();
-  startProcessor();
+  try {
+    await setupStream();
+    startProcessor();
 
-  app.listen(4000, () => {
-    console.log('╔══════════════════════════════════════╗');
-    console.log('║   Lantern — Collector v0.2           ║');
-    console.log('║   Listening on :4000                 ║');
-    console.log('║   Storage: PostgreSQL + Redis        ║');
-    console.log('╚══════════════════════════════════════╝\n');
-  });
+    app.listen(4000, () => {
+      console.log('╔══════════════════════════════════════╗');
+      console.log('║   Lantern — Collector v0.2           ║');
+      console.log('║   Listening on :4000                 ║');
+      console.log('║   Storage: PostgreSQL + Redis        ║');
+      console.log('║   Metrics: :4000/metrics             ║');
+      console.log('╚══════════════════════════════════════╝\n');
+    });
+  } catch (err) {
+    console.error('[Collector] Failed to start:', err.message);
+    process.exit(1);
+  }
 }
+
+process.on('SIGTERM', async () => {
+  console.log('[Collector] Received SIGTERM, shutting down gracefully...');
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('[Collector] Received SIGINT, shutting down gracefully...');
+  process.exit(0);
+});
 
 start();
