@@ -6,7 +6,7 @@ services:
     environment:
       POSTGRES_DB: lantern
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${PGPASSWORD:-postgres}
     ports:
       - "5432:5432"
     volumes:
@@ -38,11 +38,12 @@ services:
       PGHOST: postgres
       PGPORT: 5432
       PGUSER: postgres
-      PGPASSWORD: postgres
+      PGPASSWORD: ${PGPASSWORD:-postgres}
       PGDATABASE: lantern
       REDIS_HOST: redis
       REDIS_PORT: 6379
       NODE_ENV: production
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
     depends_on:
       postgres:
         condition: service_healthy
@@ -54,6 +55,19 @@ services:
       timeout: 5s
       retries: 3
 
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+      args:
+        VITE_COLLECTOR_URL: ${VITE_COLLECTOR_URL:-http://localhost:4000}
+    ports:
+      - "80:80"
+    depends_on:
+      collector:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   postgres_data:
-  redis_data:
+  redis_data:

@@ -16,9 +16,6 @@ RUN cd services/api-gateway && npm install && cd ../../.. && \
     cd services/order-service && npm install && cd ../../.. && \
     cd services/payment-service && npm install && cd ../../..
 
-# Copy .env
-COPY .env .
-
 # Expose ports
 EXPOSE 4000 3000 4001 4002
 

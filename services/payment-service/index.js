@@ -1,3 +1,4 @@
+require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env') });
 const express = require('express');
 const { Tracer, middleware } = require('../../packages/sdk');
 
@@ -6,7 +7,7 @@ app.use(express.json());
 
 const tracer = new Tracer({
   serviceName:  'payment-service',
-  collectorUrl: 'http://localhost:4000',
+  collectorUrl: process.env.COLLECTOR_URL || 'http://localhost:4000',
 });
 
 app.use(middleware(tracer));

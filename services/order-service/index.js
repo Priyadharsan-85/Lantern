@@ -1,3 +1,4 @@
+require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env') });
 const express = require('express');
 const axios   = require('axios');
 const { Tracer, middleware } = require('../../packages/sdk');
@@ -7,7 +8,7 @@ app.use(express.json());
 
 const tracer = new Tracer({
   serviceName:  'order-service',
-  collectorUrl: 'http://localhost:4000',
+  collectorUrl: process.env.COLLECTOR_URL || 'http://localhost:4000',
 });
 
 app.use(middleware(tracer));
@@ -26,7 +27,7 @@ app.post('/process', async (req, res) => {
     });
 
     const paymentRes = await axios.post(
-      'http://localhost:4002/charge',
+      (process.env.PAYMENT_SERVICE_URL || 'http://localhost:4002') + '/charge',
       { amount: req.body.amount || 100, userId: req.body.userId },
       { headers: tracer.injectContext(span) }
     );

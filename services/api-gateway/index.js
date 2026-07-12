@@ -1,3 +1,4 @@
+require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env') });
 const express = require('express');
 const axios   = require('axios');
 const { Tracer, middleware } = require('../../packages/sdk');
@@ -7,7 +8,7 @@ app.use(express.json());
 
 const tracer = new Tracer({
   serviceName:  'api-gateway',
-  collectorUrl: 'http://localhost:4000',
+  collectorUrl: process.env.COLLECTOR_URL || 'http://localhost:4000',
 });
 
 app.use(middleware(tracer));
@@ -20,7 +21,7 @@ app.post('/order', async (req, res) => {
     span.setTag('user.id', req.body.userId || 'anonymous');
 
     const orderRes = await axios.post(
-      'http://localhost:4001/process',
+      (process.env.ORDER_SERVICE_URL || 'http://localhost:4001') + '/process',
       req.body,
       { headers: tracer.injectContext(span) }
     );

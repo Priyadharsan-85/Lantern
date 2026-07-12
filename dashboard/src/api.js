@@ -1,4 +1,4 @@
-const API_BASE = 'http://localhost:4000';
+const API_BASE = import.meta.env.VITE_COLLECTOR_URL || 'http://localhost:4000';
 
 export async function fetchTraces() {
   const res = await fetch(`${API_BASE}/traces`);

@@ -1,7 +1,10 @@
 const Redis = require('ioredis');
 
-const redis    = new Redis({ host: 'localhost', port: 6379 });
-const consumer = new Redis({ host: 'localhost', port: 6379 });
+const REDIS_HOST = process.env.REDIS_HOST || 'localhost';
+const REDIS_PORT = Number(process.env.REDIS_PORT) || 6379;
+
+const redis    = new Redis({ host: REDIS_HOST, port: REDIS_PORT });
+const consumer = new Redis({ host: REDIS_HOST, port: REDIS_PORT });
 
 const STREAM_KEY  = 'lantern:spans';
 const GROUP_NAME  = 'span-processors';
