@@ -8,6 +8,67 @@
   color: var(--ink-high);
 }
 
+.login-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: var(--bg-base);
+  color: var(--ink-high);
+}
+
+.login-card {
+  width: min(360px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 32px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-hair);
+  border-radius: var(--radius-md);
+}
+
+.login-card h1 {
+  margin: 0 0 8px;
+  font-size: 20px;
+}
+
+.login-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--ink-mid);
+  font-size: 12px;
+}
+
+.login-card input {
+  padding: 10px;
+  color: var(--ink-high);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-hair);
+  border-radius: var(--radius-md);
+}
+
+.login-submit {
+  padding: 10px;
+  color: var(--bg-base);
+  background: var(--signal);
+  border: 0;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.login-submit:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.login-error {
+  margin: 0;
+  color: var(--status-error);
+  font-size: 12px;
+}
+
 .topbar {
   display: flex;
   align-items: center;
@@ -653,3 +714,99 @@
     height: 95vh;
   }
 }
+
+/* ── Loading skeleton ────────────────────────────────────────────────────────── */
+@keyframes shimmer {
+  0%   { background-position: -600px 0; }
+  100% { background-position:  600px 0; }
+}
+
+.skeleton-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 24px;
+}
+
+.skeleton-row {
+  display: grid;
+  grid-template-columns: 120px 1fr 160px 80px;
+  gap: 12px;
+  align-items: center;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border-hair);
+}
+
+.skeleton-cell {
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    var(--bg-raised) 25%,
+    var(--bg-wash, rgba(255,255,255,0.05)) 50%,
+    var(--bg-raised) 75%
+  );
+  background-size: 600px 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+.skeleton-cell--id  { width: 100px; }
+.skeleton-cell--op  { width: 60%; }
+.skeleton-cell--bar { width: 90%; }
+.skeleton-cell--dur { width: 50px; }
+
+/* ── Fatal error boundary ────────────────────────────────────────────────────── */
+.fatal-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  min-height: 60vh;
+  color: var(--ink-mid);
+  text-align: center;
+  padding: 32px;
+}
+
+.fatal-error svg { color: var(--accent-error, #f87171); }
+
+.fatal-error h2 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--ink-high);
+}
+
+.fatal-error p {
+  font-size: 0.875rem;
+  max-width: 40ch;
+}
+
+/* ── Banner retry button ─────────────────────────────────────────────────────── */
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 24px;
+  font-size: 0.85rem;
+}
+
+.banner--error {
+  background: rgba(248, 113, 113, 0.1);
+  border-left: 3px solid var(--accent-error, #f87171);
+  color: var(--ink-high);
+}
+
+.banner__retry {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid currentColor;
+  color: inherit;
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  opacity: 0.75;
+  transition: opacity 0.15s;
+}
+
+.banner__retry:hover { opacity: 1; }
