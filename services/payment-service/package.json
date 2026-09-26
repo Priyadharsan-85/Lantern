@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"No tests for payment-service yet\" && exit 0"
+    "test": "jest --runTestsByPath stripe.test.js index.test.js --forceExit"
   },
   "keywords": [],
   "author": "",

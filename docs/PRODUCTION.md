@@ -40,6 +40,13 @@ Required production values include:
 - ALERT_EMAIL
 - SMTP_USERNAME
 - SMTP_PASSWORD
+- PAYMENT_PROVIDER
+- STRIPE_SECRET_KEY
+- STRIPE_WEBHOOK_SECRET
+- PAYMENT_CURRENCY
+- PAYMENT_PRODUCT_NAME
+- STRIPE_SUCCESS_URL
+- STRIPE_CANCEL_URL
 
 For real deployments, use a secret manager such as:
 
@@ -67,7 +74,43 @@ The `migrate` service runs pending files from `infra/migrations` before applicat
 services start. It records completed migrations in the `schema_migrations` table.
 Do not edit an already-applied migration; add a new numbered migration instead.
 
+### Local Stripe sandbox testing (no custom domain)
+
+Use the Stripe CLI to forward events to a localhost-only published payment webhook:
+
+```powershell
+npm install -g @stripe/cli
+stripe login
+stripe listen --forward-to localhost:4002/webhooks/stripe
+```
+
+Keep `stripe listen` running. Copy the `whsec_...` secret it prints into the
+ignored `.env` file as `STRIPE_WEBHOOK_SECRET`, and add your sandbox `sk_test_...`
+key as `STRIPE_SECRET_KEY`. In another terminal, start the local stack:
+
+```powershell
+docker compose -f docker-compose.yaml -f docker-compose.stripe-local.yaml up --build -d
+```
+
+The payment service webhook is bound to `127.0.0.1` only. Use the dashboard at
+`http://localhost:8080`; do not configure the placeholder `.example.com` domain
+as a Stripe endpoint. Stripe CLI forwarding is for local sandbox tests, not live
+payments.
+
 Caddy automatically obtains HTTPS certificates from Let’s Encrypt using the configured `TLS_EMAIL` and domains.
+
+Stripe Checkout sends customers to Stripe-hosted payment pages. Configure a Stripe
+webhook endpoint at `https://<APP_DOMAIN>/webhooks/stripe` for
+`checkout.session.completed`, `checkout.session.async_payment_succeeded`,
+`checkout.session.async_payment_failed`, and `checkout.session.expired`. Copy the
+endpoint signing secret (`whsec_...`) into `STRIPE_WEBHOOK_SECRET`. Keep both URLs
+in `.env.production` quoted because they contain shell-significant characters.
+Orders remain pending until a verified webhook confirms payment. Set
+`STRIPE_SUCCESS_URL` to an HTTPS dashboard URL containing the literal
+`{CHECKOUT_SESSION_ID}` placeholder; customers must not be treated as paid based
+only on their browser redirect. This implementation deliberately accepts only
+Stripe sandbox keys: live charging remains disabled until product prices and
+customer identity are derived from trusted server-side data.
 
 ## 4. Private networking
 
@@ -108,6 +151,8 @@ Before public release, verify:
 - `NODE_ENV=production`
 - `CORS_ORIGIN` is a specific domain, not `*`
 - `COLLECTOR_API_KEY` is strong and unique
+- `PAYMENT_PROVIDER=stripe` and `STRIPE_SECRET_KEY` are configured before enabling production payments
+- simulated payments are never enabled in production
 - no DB/Redis ports are published to the internet
 - TLS certificates are valid and renewed automatically
 - monitoring and alerts are active
@@ -124,4 +169,4 @@ For a cloud deployment, use a managed service such as:
 - a managed PostgreSQL service with private networking
 - a managed Redis service with private networking
 
-This repo is production-ready from an application and deployment-configuration standpoint, but the final environment-specific deployment should still be run on a managed cloud host with proper network isolation and secrets management.
+This repo is production-oriented, but real Stripe payment processing still requires completing the provider call and webhook/reconciliation flow before accepting real payments.

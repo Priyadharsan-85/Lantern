@@ -32,7 +32,7 @@ app.use(cors({
   origin: isProd ? process.env.DASHBOARD_ORIGIN || /^https:\/\/.*/ : true,
   credentials: true,
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'x-api-key'],
+  allowedHeaders: ['Content-Type', 'x-api-key', 'Idempotency-Key'],
 }));
 app.use(express.json({ limit: '1mb' }));
 
@@ -127,10 +127,12 @@ app.use(middleware(tracer));
 
 app.post('/order', requireDashboardAuth, async (req, res) => {
   const { span } = req;
-  const idempotencyKey = req.headers['idempotency-key'];
-  if (isProd && (!idempotencyKey || idempotencyKey.length < 16 || idempotencyKey.length > 255)) {
+  const suppliedIdempotencyKey = req.headers['idempotency-key'];
+  if (isProd && (!suppliedIdempotencyKey ||
+      suppliedIdempotencyKey.length < 16 || suppliedIdempotencyKey.length > 255)) {
     return res.status(400).json({ error: 'Idempotency-Key header must be 16-255 characters' });
   }
+  const idempotencyKey = suppliedIdempotencyKey || crypto.randomUUID();
 
   // ── Input validation ───────────────────────────────────────────────────────
   const { userId, items, amount } = req.body || {};

@@ -1,27 +1,42 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: lantern
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${PGPASSWORD:-postgres}
-    ports:
-      - "5432:5432"
+      POSTGRES_PASSWORD: ${PGPASSWORD}   # Required — no default. Set in .env.
+    expose:
+      - "5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./infra/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+
+  migrate:
+    image: postgres:16-alpine
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: ${PGPASSWORD:?Set PGPASSWORD in .env}
+      PGDATABASE: lantern
+    volumes:
+      - ./infra/migrations:/migrations:ro
+      - ./infra/migrate.sh:/migrate.sh:ro
+    entrypoint: ["/bin/sh", "/migrate.sh"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    expose:
+      - "6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -29,40 +44,120 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   collector:
     build: .
-    ports:
-      - "4000:4000"
+    # Internal service — not exposed to the host. Reachable via Docker network only.
     environment:
+      SERVICE: collector
       PGHOST: postgres
       PGPORT: 5432
       PGUSER: postgres
-      PGPASSWORD: ${PGPASSWORD:-postgres}
+      PGPASSWORD: ${PGPASSWORD:?Set PGPASSWORD in .env}
       PGDATABASE: lantern
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      NODE_ENV: production
-      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      NODE_ENV: development
+      CORS_ORIGIN: ${CORS_ORIGIN:?Set CORS_ORIGIN in .env}
+      COLLECTOR_API_KEY: ${COLLECTOR_API_KEY:-local-development-key}
+      SPANS_RATE_LIMIT_MAX: ${SPANS_RATE_LIMIT_MAX:-200}
+      SPANS_RATE_LIMIT_WINDOW_MS: ${SPANS_RATE_LIMIT_WINDOW_MS:-60000}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
       interval: 10s
       timeout: 5s
       retries: 3
+    restart: unless-stopped
+
+  api-gateway:
+    build: .
+    ports:
+      - "3000:3000"   # Only public-facing service besides dashboard
+    environment:
+      SERVICE: api-gateway
+      COLLECTOR_URL: http://collector:4000
+      COLLECTOR_API_KEY: ${COLLECTOR_API_KEY:-local-development-key}
+      ORDER_SERVICE_URL: http://order-service:4001
+      DASHBOARD_ORIGIN: ${DASHBOARD_ORIGIN:-http://localhost:8080}
+      NODE_ENV: development
+    depends_on:
+      collector:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  order-service:
+    build: .
+    # Internal service — not exposed to the host.
+    environment:
+      SERVICE: order-service
+      COLLECTOR_URL: http://collector:4000
+      COLLECTOR_API_KEY: ${COLLECTOR_API_KEY:-local-development-key}
+      PAYMENT_SERVICE_URL: http://payment-service:4002
+      NODE_ENV: development
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: ${PGPASSWORD:?Set PGPASSWORD in .env}
+      PGDATABASE: lantern
+    depends_on:
+      collector:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  payment-service:
+    build: .
+    # Internal service — not exposed to the host.
+    environment:
+      SERVICE: payment-service
+      COLLECTOR_URL: http://collector:4000
+      COLLECTOR_API_KEY: ${COLLECTOR_API_KEY:-local-development-key}
+      NODE_ENV: development
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: ${PGPASSWORD:?Set PGPASSWORD in .env}
+      PGDATABASE: lantern
+      PAYMENT_FAILURE_RATE: ${PAYMENT_FAILURE_RATE:-0}
+    depends_on:
+      collector:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4002/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
 
   dashboard:
     build:
       context: ./dashboard
       dockerfile: Dockerfile
       args:
-        VITE_COLLECTOR_URL: ${VITE_COLLECTOR_URL:-http://localhost:4000}
+        VITE_COLLECTOR_URL: ${VITE_COLLECTOR_URL:-/api}
     ports:
-      - "80:80"
+      - "8080:80"
     depends_on:
       collector:
         condition: service_healthy
@@ -70,4 +165,4 @@ services:
 
 volumes:
   postgres_data:
-  redis_data:
+  redis_data:

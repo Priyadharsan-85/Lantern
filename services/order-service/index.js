@@ -62,8 +62,11 @@ app.post('/process', async (req, res) => {
 
   try {
     const existing = await pool.query(
-      `SELECT order_id, status, amount FROM orders
-       WHERE user_id = $1 AND idempotency_key = $2`,
+      `SELECT o.order_id, o.status, o.amount, p.checkout_url
+       FROM orders o
+       LEFT JOIN payments p
+         ON p.user_id = o.user_id AND p.idempotency_key = o.idempotency_key
+       WHERE o.user_id = $1 AND o.idempotency_key = $2`,
       [userId, idempotencyKey || null]
     );
     if (existing.rowCount > 0) {
@@ -73,6 +76,7 @@ app.post('/process', async (req, res) => {
       return res.json({
         orderId: existing.rows[0].order_id,
         status: existing.rows[0].status,
+        checkoutUrl: existing.rows[0].checkout_url,
         idempotentReplay: true,
       });
     }
@@ -105,7 +109,7 @@ app.post('/process', async (req, res) => {
     const paymentRes = await axios.post(
       (process.env.PAYMENT_SERVICE_URL || 'http://localhost:4002') + '/charge',
       { amount, userId },
-      { headers: tracer.injectContext(span, { 'idempotency-key': idempotencyKey }) }
+      { headers: tracer.injectContext(span, { 'idempotency-key': idempotencyKey }), timeout: 15_000 }
     );
 
     // ── Persist order to database ──────────────────────────────────────────────
@@ -113,25 +117,50 @@ app.post('/process', async (req, res) => {
     const orderId = `ord_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
     let replayOrder = null;
+    let finalOrderStatus = paymentRes.data.status === 'paid' ? 'confirmed' : 'pending';
     await tracer.trace('db.insertOrder', async (dbSpan) => {
       dbSpan.setTag('db.table', 'orders');
       dbSpan.setTag('db.operation', 'insert');
       dbSpan.setTag('order.id', orderId);
 
-      const result = await pool.query(
-        `INSERT INTO orders (order_id, trace_id, user_id, items, amount, status, idempotency_key)
-         VALUES ($1, $2, $3, $4, $5, 'confirmed', $6)
-         ON CONFLICT (user_id, idempotency_key) WHERE idempotency_key IS NOT NULL
-         DO NOTHING
-         RETURNING order_id`,
-        [orderId, span.traceId, userId, JSON.stringify(items), amount, idempotencyKey || null]
-      );
-      if (result.rowCount === 0) {
-        const replay = await pool.query(
-          'SELECT order_id, status FROM orders WHERE user_id = $1 AND idempotency_key = $2',
-          [userId, idempotencyKey]
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const result = await client.query(
+          `INSERT INTO orders (order_id, trace_id, user_id, items, amount, status, idempotency_key)
+           VALUES ($1, $2, $3, $4, $5, 'pending', $6)
+           ON CONFLICT (user_id, idempotency_key) WHERE idempotency_key IS NOT NULL
+           DO NOTHING
+           RETURNING order_id`,
+          [orderId, span.traceId, userId, JSON.stringify(items), amount, idempotencyKey || null]
         );
-        replayOrder = replay.rows[0];
+        if (result.rowCount === 0) {
+          const replay = await client.query(
+            'SELECT order_id, status FROM orders WHERE user_id = $1 AND idempotency_key = $2',
+            [userId, idempotencyKey]
+          );
+          replayOrder = replay.rows[0];
+        } else {
+          const payment = await client.query(
+            `UPDATE payments SET order_id = $1
+             WHERE user_id = $2 AND idempotency_key = $3
+             RETURNING status`,
+            [orderId, userId, idempotencyKey || null]
+          );
+          if (payment.rows[0]?.status === 'paid') {
+            await client.query(`UPDATE orders SET status = 'confirmed' WHERE order_id = $1`, [orderId]);
+            finalOrderStatus = 'confirmed';
+          } else if (payment.rows[0]?.status === 'failed') {
+            await client.query(`UPDATE orders SET status = 'failed' WHERE order_id = $1`, [orderId]);
+            finalOrderStatus = 'failed';
+          }
+        }
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
       }
       dbSpan.log('Order persisted');
     });
@@ -144,11 +173,12 @@ app.post('/process', async (req, res) => {
       });
     }
 
-    span.log('Order confirmed');
+    span.log(paymentRes.data.status === 'paid' ? 'Order confirmed' : 'Checkout started');
     res.json({
       orderId,
       payment: paymentRes.data,
-      status:  'confirmed',
+      checkoutUrl: paymentRes.data.checkoutUrl,
+      status: finalOrderStatus,
     });
 
   } catch (err) {

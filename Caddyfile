@@ -1,0 +1,17 @@
+{
+  email {$TLS_EMAIL}
+}
+
+{$APP_DOMAIN} {
+  handle /webhooks/stripe {
+    reverse_proxy payment-service:4002
+  }
+
+  handle {
+    reverse_proxy api-gateway:3000
+  }
+}
+
+{$DASHBOARD_DOMAIN} {
+  reverse_proxy dashboard:80
+}

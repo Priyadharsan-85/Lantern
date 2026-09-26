@@ -1,0 +1,12 @@
+services:
+  payment-service:
+    ports:
+      - "127.0.0.1:4002:4002"
+    environment:
+      PAYMENT_PROVIDER: stripe
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:?Set STRIPE_SECRET_KEY in .env}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:?Start Stripe CLI and set its whsec_ secret in .env}
+      PAYMENT_CURRENCY: ${PAYMENT_CURRENCY:-usd}
+      PAYMENT_PRODUCT_NAME: ${PAYMENT_PRODUCT_NAME:-Lantern order}
+      STRIPE_SUCCESS_URL: ${STRIPE_SUCCESS_URL:-http://localhost:8080/?checkout=success&session_id={CHECKOUT_SESSION_ID}}
+      STRIPE_CANCEL_URL: ${STRIPE_CANCEL_URL:-http://localhost:8080/?checkout=cancelled}
