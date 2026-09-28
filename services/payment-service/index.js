@@ -17,7 +17,7 @@ if (!['disabled', 'simulated', 'stripe'].includes(paymentProvider)) {
   throw new Error('[payment-service] PAYMENT_PROVIDER must be "disabled", "stripe", or "simulated"');
 }
 if (isProd && paymentProvider !== 'disabled') {
-  throw new Error('[payment-service] payments must remain disabled in production until pricing and user identity are server-controlled');
+  throw new Error('[payment-service] production payments remain disabled until live Stripe configuration, webhook routing, and security controls are explicitly enabled');
 }
 if (paymentProvider === 'stripe' && !/^sk_test_/.test(process.env.STRIPE_SECRET_KEY || '')) {
   throw new Error('[payment-service] only Stripe sandbox keys are supported until server-side product pricing and user identity are implemented');
@@ -148,16 +148,32 @@ app.post('/charge', async (req, res) => {
   }
   const { span } = req;
   const idempotencyKey = req.headers['idempotency-key'];
-  const { amount, userId } = req.body || {};
+  const { amount: suppliedAmount, amountMinor: suppliedAmountMinor, userId, lineItems } = req.body || {};
+  const amountMinor = Number.isSafeInteger(suppliedAmountMinor)
+    ? suppliedAmountMinor
+    : Number.isFinite(suppliedAmount)
+      ? Math.round(suppliedAmount * 100)
+      : NaN;
+  const amount = amountMinor / 100;
 
   // ── Input validation ───────────────────────────────────────────────────────
   if (!userId) {
     span.setTag('validation.error', 'missing userId');
     return res.status(400).json({ error: 'userId is required' });
   }
-  if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) {
+  if (!Number.isSafeInteger(amountMinor) || amountMinor < 1) {
     span.setTag('validation.error', 'invalid amount');
-    return res.status(400).json({ error: 'amount must be a positive number' });
+    return res.status(400).json({ error: 'amountMinor must be a positive safe integer' });
+  }
+  if (paymentProvider === 'stripe' && lineItems !== undefined &&
+      (!Array.isArray(lineItems) || lineItems.length < 1 || lineItems.length > 20 ||
+       lineItems.some((item) =>
+         !item || typeof item.name !== 'string' || item.name.length < 1 || item.name.length > 250 ||
+         !Number.isSafeInteger(item.unitAmountMinor) || item.unitAmountMinor < 1 ||
+         !Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > 99) ||
+       lineItems.reduce((total, item) =>
+         total + BigInt(item.unitAmountMinor) * BigInt(item.quantity), 0n) !== BigInt(amountMinor))) {
+    return res.status(400).json({ error: 'Stripe line items must match the requested total' });
   }
   if (isProd && (!idempotencyKey || idempotencyKey.length < 16 || idempotencyKey.length > 255)) {
     return res.status(400).json({ error: 'Idempotency-Key header must be 16-255 characters' });
@@ -224,8 +240,14 @@ app.post('/charge', async (req, res) => {
         const session = await createCheckoutSession({
           secretKey: process.env.STRIPE_SECRET_KEY,
           amount,
+          amountMinor,
           currency,
           productName: process.env.PAYMENT_PRODUCT_NAME || 'Lantern order',
+          lineItems: lineItems?.map((item) => ({
+            name: item.name,
+            quantity: item.quantity,
+            unitAmountMinor: item.unitAmountMinor,
+          })),
           userId,
           idempotencyKey,
           successUrl: process.env.STRIPE_SUCCESS_URL ||

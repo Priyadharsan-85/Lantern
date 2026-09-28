@@ -1,11 +1,22 @@
 require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env') });
 const express = require('express');
 const axios   = require('axios');
+const crypto  = require('crypto');
+const { promisify } = require('util');
 const pino    = require('pino');
 const helmet  = require('helmet');
 const compression = require('compression');
 const { Pool } = require('pg');
 const { Tracer, middleware } = require('sdk');
+const scrypt = promisify(crypto.scrypt);
+const PASSWORD_SCRYPT_N = 16384;
+const PASSWORD_SCRYPT_R = 8;
+const PASSWORD_SCRYPT_P = 1;
+const PASSWORD_HASH_BYTES = 64;
+const PASSWORD_SCRYPT_MAXMEM = 64 * 1024 * 1024;
+const MAX_CART_ITEMS = 20;
+const MAX_ITEM_QUANTITY = 99;
+const MAX_ORDER_MINOR_UNITS = 99_999_999n;
 
 const isProd = process.env.NODE_ENV === 'production';
 if (isProd && !process.env.COLLECTOR_API_KEY) {
@@ -47,22 +58,117 @@ const tracer = new Tracer({
 
 app.use(middleware(tracer));
 
+app.post('/accounts/register', async (req, res) => {
+  const email = normalizeEmail(req.body?.email);
+  const password = req.body?.password;
+  if (!isValidEmail(email) || !isValidPassword(password)) {
+    return res.status(400).json({
+      error: 'A valid email and a password between 12 and 128 UTF-8 bytes are required',
+    });
+  }
+
+  try {
+    const customerId = `cus_${crypto.randomUUID()}`;
+    const salt = crypto.randomBytes(16);
+    const hash = await scrypt(password, salt, PASSWORD_HASH_BYTES, {
+      N: PASSWORD_SCRYPT_N,
+      r: PASSWORD_SCRYPT_R,
+      p: PASSWORD_SCRYPT_P,
+      maxmem: PASSWORD_SCRYPT_MAXMEM,
+    });
+    const passwordHash = [
+      'scrypt',
+      PASSWORD_SCRYPT_N,
+      PASSWORD_SCRYPT_R,
+      PASSWORD_SCRYPT_P,
+      salt.toString('base64url'),
+      hash.toString('base64url'),
+    ].join('$');
+    await pool.query(
+      'INSERT INTO customers (customer_id, email, password_hash) VALUES ($1, $2, $3)',
+      [customerId, email, passwordHash]
+    );
+    res.status(201).json({ customer: { id: customerId, email } });
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ error: 'An account with this email already exists' });
+    }
+    logger.error({ err }, '[order-service] Failed to register customer');
+    res.status(500).json({ error: 'Unable to create customer account' });
+  }
+});
+
+app.post('/accounts/login', async (req, res) => {
+  const email = normalizeEmail(req.body?.email);
+  const password = req.body?.password;
+  if (!isValidEmail(email) || typeof password !== 'string' ||
+      Buffer.byteLength(password, 'utf8') > 128) {
+    return res.status(400).json({ error: 'A valid email and password are required' });
+  }
+
+  try {
+    const result = await pool.query(
+      'SELECT customer_id, email, password_hash FROM customers WHERE LOWER(email) = $1',
+      [email]
+    );
+    const customer = result.rows[0];
+    const passwordMatches = customer
+      ? await verifyPassword(password, customer.password_hash)
+      : await verifyPassword(password, makeDummyPasswordHash());
+    if (!customer || !passwordMatches) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+    res.json({ customer: { id: customer.customer_id, email: customer.email } });
+  } catch (err) {
+    logger.error({ err }, '[order-service] Failed to authenticate customer');
+    res.status(500).json({ error: 'Unable to sign in' });
+  }
+});
+
+app.get('/catalog', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT product_id AS id, name, description, price_minor AS "priceMinor", currency
+       FROM products
+       WHERE active = TRUE
+       ORDER BY name, product_id`
+    );
+    res.json({ products: result.rows });
+  } catch (err) {
+    logger.error({ err }, '[order-service] Failed to load product catalog');
+    res.status(500).json({ error: 'Unable to load product catalog' });
+  }
+});
+
 app.post('/process', async (req, res) => {
   const { span } = req;
   const idempotencyKey = req.headers['idempotency-key'];
-  const { userId, items = [], amount = 0 } = req.body || {};
+  const userId = req.headers['x-customer-id'];
+  const requestedItems = req.body?.items;
 
   if (!userId) {
     span.setTag('validation.error', 'missing userId');
-    return res.status(400).json({ error: 'userId is required' });
+    return res.status(401).json({ error: 'Customer authentication is required' });
   }
   if (isProd && (!idempotencyKey || idempotencyKey.length < 16 || idempotencyKey.length > 255)) {
     return res.status(400).json({ error: 'Idempotency-Key header must be 16-255 characters' });
   }
+  if (!Array.isArray(requestedItems) || requestedItems.length === 0 ||
+      requestedItems.length > MAX_CART_ITEMS ||
+      requestedItems.some((item) =>
+        !item || typeof item.productId !== 'string' ||
+        !/^[A-Za-z0-9_-]{1,100}$/.test(item.productId) ||
+        !Number.isInteger(item.quantity) ||
+        item.quantity < 1 || item.quantity > MAX_ITEM_QUANTITY) ||
+      new Set(requestedItems.map((item) => item.productId)).size !== requestedItems.length) {
+    return res.status(400).json({
+      error: `items must contain 1-${MAX_CART_ITEMS} unique products with quantities from 1 to ${MAX_ITEM_QUANTITY}`,
+    });
+  }
 
   try {
     const existing = await pool.query(
-      `SELECT o.order_id, o.status, o.amount, p.checkout_url
+      `SELECT o.order_id, o.status, o.items, p.checkout_url
        FROM orders o
        LEFT JOIN payments p
          ON p.user_id = o.user_id AND p.idempotency_key = o.idempotency_key
@@ -70,8 +176,8 @@ app.post('/process', async (req, res) => {
       [userId, idempotencyKey || null]
     );
     if (existing.rowCount > 0) {
-      if (Number(existing.rows[0].amount) !== amount) {
-        return res.status(409).json({ error: 'Idempotency-Key was already used with a different amount' });
+      if (!sameCart(existing.rows[0].items, requestedItems)) {
+        return res.status(409).json({ error: 'Idempotency-Key was already used with different items' });
       }
       return res.json({
         orderId: existing.rows[0].order_id,
@@ -80,6 +186,43 @@ app.post('/process', async (req, res) => {
         idempotentReplay: true,
       });
     }
+
+    const productIds = requestedItems.map((item) => item.productId);
+    const productsResult = await pool.query(
+      `SELECT product_id, name, price_minor::text AS price_minor, currency
+       FROM products
+       WHERE active = TRUE AND product_id = ANY($1::text[])`,
+      [productIds]
+    );
+    if (productsResult.rowCount !== requestedItems.length) {
+      return res.status(400).json({ error: 'One or more products are unavailable' });
+    }
+
+    const productsById = new Map(productsResult.rows.map((product) => [product.product_id, product]));
+    let totalMinor = 0n;
+    const items = requestedItems.map(({ productId, quantity }) => {
+      const product = productsById.get(productId);
+      if (!product || product.currency !== 'inr') {
+        throw new Error('Product catalog contains an unsupported currency');
+      }
+      const unitPriceMinor = BigInt(product.price_minor);
+      if (unitPriceMinor < 1n) {
+        throw new Error('Product catalog contains an invalid price');
+      }
+      const lineTotalMinor = unitPriceMinor * BigInt(quantity);
+      totalMinor += lineTotalMinor;
+      return {
+        productId,
+        name: product.name,
+        quantity,
+        unitPriceMinor: Number(unitPriceMinor),
+        lineTotalMinor: Number(lineTotalMinor),
+      };
+    });
+    if (totalMinor < 1n || totalMinor > MAX_ORDER_MINOR_UNITS) {
+      return res.status(400).json({ error: 'Order total is outside the supported INR payment range' });
+    }
+    const amount = Number(totalMinor) / 100;
 
     span.log('Validating order items');
     span.setTag('order.items', JSON.stringify(items));
@@ -92,7 +235,6 @@ app.post('/process', async (req, res) => {
 
       const client = await pool.connect();
       try {
-        // Verify the orders table is reachable and count existing orders for this user
         const result = await client.query(
           'SELECT COUNT(*) AS order_count FROM orders WHERE user_id = $1',
           [userId]
@@ -108,7 +250,16 @@ app.post('/process', async (req, res) => {
     // ── Call payment service ───────────────────────────────────────────────────
     const paymentRes = await axios.post(
       (process.env.PAYMENT_SERVICE_URL || 'http://localhost:4002') + '/charge',
-      { amount, userId },
+      {
+        amountMinor: Number(totalMinor),
+        currency: 'inr',
+        userId,
+        lineItems: items.map((item) => ({
+          name: item.name,
+          quantity: item.quantity,
+          unitAmountMinor: item.unitPriceMinor,
+        })),
+      },
       { headers: tracer.injectContext(span, { 'idempotency-key': idempotencyKey }), timeout: 15_000 }
     );
 
@@ -204,3 +355,46 @@ if (require.main === module) {
 }
 
 module.exports = app;
+
+function sameCart(storedItems, requestedItems) {
+  const snapshot = typeof storedItems === 'string' ? JSON.parse(storedItems) : storedItems;
+  if (!Array.isArray(snapshot) || snapshot.length !== requestedItems.length) return false;
+  const storedCart = new Map(snapshot.map((item) => [item.productId, item.quantity]));
+  return requestedItems.every((item) => storedCart.get(item.productId) === item.quantity);
+}
+
+function normalizeEmail(email) {
+  return typeof email === 'string' ? email.trim().toLowerCase() : '';
+}
+
+function isValidEmail(email) {
+  return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function isValidPassword(password) {
+  return typeof password === 'string' &&
+    Buffer.byteLength(password, 'utf8') >= 12 &&
+    Buffer.byteLength(password, 'utf8') <= 128;
+}
+
+async function verifyPassword(password, encodedHash) {
+  const [algorithm, n, r, p, encodedSalt, encodedKey] = encodedHash.split('$');
+  if (algorithm !== 'scrypt' || Number(n) !== PASSWORD_SCRYPT_N ||
+      Number(r) !== PASSWORD_SCRYPT_R || Number(p) !== PASSWORD_SCRYPT_P) {
+    return false;
+  }
+  const salt = Buffer.from(encodedSalt, 'base64url');
+  const expected = Buffer.from(encodedKey, 'base64url');
+  if (salt.length !== 16 || expected.length !== PASSWORD_HASH_BYTES) return false;
+  const actual = await scrypt(password, salt, expected.length, {
+    N: PASSWORD_SCRYPT_N,
+    r: PASSWORD_SCRYPT_R,
+    p: PASSWORD_SCRYPT_P,
+    maxmem: PASSWORD_SCRYPT_MAXMEM,
+  });
+  return crypto.timingSafeEqual(actual, expected);
+}
+
+function makeDummyPasswordHash() {
+  return `scrypt$${PASSWORD_SCRYPT_N}$${PASSWORD_SCRYPT_R}$${PASSWORD_SCRYPT_P}$${Buffer.alloc(16).toString('base64url')}$${Buffer.alloc(PASSWORD_HASH_BYTES).toString('base64url')}`;
+}

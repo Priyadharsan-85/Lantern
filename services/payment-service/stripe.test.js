@@ -35,6 +35,57 @@ describe('Stripe Checkout integration', () => {
     expect(options.headers['Idempotency-Key']).toHaveLength(64);
   });
 
+  it('creates an INR Checkout Session using paise as the amount unit', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: 'cs_test_inr', url: 'https://checkout.stripe.test/inr' }),
+    });
+
+    await createCheckoutSession({
+      secretKey: 'sk_test_example',
+      amount: 1299.99,
+      currency: 'inr',
+      productName: 'Lantern order',
+      userId: 'cus_123',
+      idempotencyKey: 'order-request-key-1234',
+      successUrl: 'https://app.example.test/?checkout=success&session_id={CHECKOUT_SESSION_ID}',
+      cancelUrl: 'https://app.example.test/?checkout=cancelled',
+    });
+
+    const [, options] = fetchMock.mock.calls[0];
+    const body = new URLSearchParams(options.body);
+    expect(body.get('line_items[0][price_data][currency]')).toBe('inr');
+    expect(body.get('line_items[0][price_data][unit_amount]')).toBe('129999');
+  });
+
+  it('preserves server-priced product names, quantities, and exact paise amounts', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: 'cs_test_cart', url: 'https://checkout.stripe.test/cart' }),
+    });
+
+    await createCheckoutSession({
+      secretKey: 'sk_test_example',
+      amount: 25.98,
+      amountMinor: 2598,
+      currency: 'inr',
+      productName: 'Unused fallback',
+      lineItems: [
+        { name: 'First item', quantity: 2, unitAmountMinor: 1299 },
+      ],
+      userId: 'cus_123',
+      idempotencyKey: 'order-request-key-1234',
+      successUrl: 'https://app.example.test/?checkout=success&session_id={CHECKOUT_SESSION_ID}',
+      cancelUrl: 'https://app.example.test/?checkout=cancelled',
+    });
+
+    const [, options] = fetchMock.mock.calls[0];
+    const body = new URLSearchParams(options.body);
+    expect(body.get('line_items[0][price_data][product_data][name]')).toBe('First item');
+    expect(body.get('line_items[0][price_data][unit_amount]')).toBe('1299');
+    expect(body.get('line_items[0][quantity]')).toBe('2');
+  });
+
   it('rejects invalid amounts without contacting Stripe', async () => {
     const fetchMock = jest.spyOn(global, 'fetch');
     await expect(createCheckoutSession({

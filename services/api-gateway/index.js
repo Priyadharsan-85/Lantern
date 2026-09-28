@@ -37,6 +37,7 @@ app.use(cors({
 app.use(express.json({ limit: '1mb' }));
 
 const SESSION_COOKIE = 'lantern_session';
+const CUSTOMER_SESSION_COOKIE = 'lantern_customer_session';
 const SESSION_TTL_SECONDS = 8 * 60 * 60;
 
 function signSession(payload) {
@@ -72,9 +73,38 @@ function verifySession(value) {
   }
 }
 
+function readSignedSession(value) {
+  if (!value) return null;
+  const [encoded, signature] = value.split('.');
+  if (!encoded || !signature) return null;
+  const expected = crypto.createHmac('sha256', process.env.SESSION_SECRET || 'development-only-secret')
+    .update(encoded)
+    .digest('base64url');
+  if (signature.length !== expected.length ||
+      !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString());
+    return payload.exp > Math.floor(Date.now() / 1000) ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
 function setSessionCookie(res, value, maxAge = SESSION_TTL_SECONDS) {
   const flags = [
     `${SESSION_COOKIE}=${encodeURIComponent(value)}`,
+    `Max-Age=${maxAge}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+  ];
+  if (isProd) flags.push('Secure');
+  res.setHeader('Set-Cookie', flags.join('; '));
+}
+
+function setCustomerSessionCookie(res, value, maxAge = SESSION_TTL_SECONDS) {
+  const flags = [
+    `${CUSTOMER_SESSION_COOKIE}=${encodeURIComponent(value)}`,
     `Max-Age=${maxAge}`,
     'Path=/',
     'HttpOnly',
@@ -90,6 +120,16 @@ function requireDashboardAuth(req, res, next) {
   if (!verifySession(cookies[SESSION_COOKIE])) {
     return res.status(401).json({ error: 'Authentication required' });
   }
+  next();
+}
+
+function requireCustomerAuth(req, res, next) {
+  const cookies = readCookies(req.headers.cookie);
+  const session = readSignedSession(cookies[CUSTOMER_SESSION_COOKIE]);
+  if (!session || session.role !== 'customer' || !session.customerId) {
+    return res.status(401).json({ error: 'Customer authentication required' });
+  }
+  req.customer = { id: session.customerId, email: session.email };
   next();
 }
 
@@ -117,6 +157,67 @@ app.get('/auth/me', (req, res) => {
   res.status(authenticated ? 200 : 401).json({ authenticated });
 });
 
+app.post('/auth/customer/register', async (req, res) => {
+  try {
+    const response = await axios.post(
+      `${process.env.ORDER_SERVICE_URL || 'http://localhost:4001'}/accounts/register`,
+      { email: req.body?.email, password: req.body?.password },
+      { timeout: 10_000 }
+    );
+    const customer = response.data.customer;
+    const exp = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
+    setCustomerSessionCookie(res, signSession({
+      role: 'customer',
+      customerId: customer.id,
+      email: customer.email,
+      exp,
+    }));
+    res.status(201).json({ authenticated: true, customer });
+  } catch (err) {
+    const status = err.response?.status || 500;
+    res.status(status).json({ error: err.response?.data?.error || 'Unable to create customer account' });
+  }
+});
+
+app.post('/auth/customer/login', async (req, res) => {
+  try {
+    const response = await axios.post(
+      `${process.env.ORDER_SERVICE_URL || 'http://localhost:4001'}/accounts/login`,
+      { email: req.body?.email, password: req.body?.password },
+      { timeout: 10_000 }
+    );
+    const customer = response.data.customer;
+    const exp = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
+    setCustomerSessionCookie(res, signSession({
+      role: 'customer',
+      customerId: customer.id,
+      email: customer.email,
+      exp,
+    }));
+    res.json({ authenticated: true, customer });
+  } catch (err) {
+    const status = err.response?.status || 500;
+    res.status(status).json({ error: err.response?.data?.error || 'Unable to sign in' });
+  }
+});
+
+app.post('/auth/customer/logout', (req, res) => {
+  setCustomerSessionCookie(res, '', 0);
+  res.json({ authenticated: false });
+});
+
+app.get('/auth/customer/me', (req, res) => {
+  const cookies = readCookies(req.headers.cookie);
+  const session = readSignedSession(cookies[CUSTOMER_SESSION_COOKIE]);
+  if (!session || session.role !== 'customer' || !session.customerId) {
+    return res.status(401).json({ authenticated: false });
+  }
+  res.json({
+    authenticated: true,
+    customer: { id: session.customerId, email: session.email },
+  });
+});
+
 const tracer = new Tracer({
   serviceName:  'api-gateway',
   collectorUrl: process.env.COLLECTOR_URL || 'http://localhost:4000',
@@ -125,39 +226,54 @@ const tracer = new Tracer({
 
 app.use(middleware(tracer));
 
-app.post('/order', requireDashboardAuth, async (req, res) => {
+app.get('/products', async (req, res) => {
+  try {
+    const response = await axios.get(
+      `${process.env.ORDER_SERVICE_URL || 'http://localhost:4001'}/catalog`,
+      { timeout: 5000 }
+    );
+    res.json(response.data);
+  } catch (err) {
+    const status = err.response?.status || 500;
+    res.status(status).json({ error: err.response?.data?.error || 'Unable to load product catalog' });
+  }
+});
+
+app.post('/order', requireCustomerAuth, async (req, res) => {
   const { span } = req;
   const suppliedIdempotencyKey = req.headers['idempotency-key'];
-  if (isProd && (!suppliedIdempotencyKey ||
-      suppliedIdempotencyKey.length < 16 || suppliedIdempotencyKey.length > 255)) {
+  if (isProd && !suppliedIdempotencyKey) {
+    return res.status(400).json({ error: 'Idempotency-Key header is required' });
+  }
+  if (suppliedIdempotencyKey &&
+      (typeof suppliedIdempotencyKey !== 'string' ||
+       suppliedIdempotencyKey.length < 16 || suppliedIdempotencyKey.length > 255)) {
     return res.status(400).json({ error: 'Idempotency-Key header must be 16-255 characters' });
   }
   const idempotencyKey = suppliedIdempotencyKey || crypto.randomUUID();
 
-  // ── Input validation ───────────────────────────────────────────────────────
-  const { userId, items, amount } = req.body || {};
-  if (!userId) {
-    span.setTag('validation.error', 'missing userId');
-    return res.status(400).json({ error: 'userId is required' });
-  }
+  const { items } = req.body || {};
   if (!Array.isArray(items) || items.length === 0) {
     span.setTag('validation.error', 'missing items');
     return res.status(400).json({ error: 'items must be a non-empty array' });
   }
-  if (typeof amount !== 'number' || amount <= 0) {
-    span.setTag('validation.error', 'invalid amount');
-    return res.status(400).json({ error: 'amount must be a positive number' });
-  }
 
   try {
     span.log('Received order request');
-    span.setTag('user.id', userId);
+    span.setTag('user.id', req.customer.id);
     span.setTag('order.items_count', items.length);
 
     const orderRes = await axios.post(
       (process.env.ORDER_SERVICE_URL || 'http://localhost:4001') + '/process',
-      req.body,
-      { headers: tracer.injectContext(span, { 'idempotency-key': idempotencyKey }) }
+      { items },
+      {
+        headers: {
+          ...tracer.injectContext(span),
+          'idempotency-key': idempotencyKey,
+          'x-customer-id': req.customer.id,
+        },
+        timeout: 15_000,
+      }
     );
 
     span.log('Order processed successfully');

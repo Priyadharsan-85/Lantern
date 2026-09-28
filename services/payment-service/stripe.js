@@ -4,14 +4,16 @@ const STRIPE_API = 'https://api.stripe.com/v1';
 const REQUEST_TIMEOUT_MS = 10_000;
 const SIGNATURE_TOLERANCE_SECONDS = 300;
 const TWO_DECIMAL_CURRENCIES = new Set([
-  'aud', 'cad', 'chf', 'dkk', 'eur', 'gbp', 'hkd', 'nzd', 'sek', 'sgd', 'usd',
+  'aud', 'cad', 'chf', 'dkk', 'eur', 'gbp', 'hkd', 'inr', 'nzd', 'sek', 'sgd', 'usd',
 ]);
 
 async function createCheckoutSession({
   secretKey,
   amount,
+  amountMinor: suppliedAmountMinor,
   currency,
   productName,
+  lineItems,
   userId,
   idempotencyKey,
   successUrl,
@@ -22,10 +24,27 @@ async function createCheckoutSession({
     throw new Error('Unsupported currency; configure a supported two-decimal Stripe currency');
   }
   const scaledAmount = amount * 100;
-  const amountInMinorUnits = Math.round(scaledAmount);
+  const amountInMinorUnits = suppliedAmountMinor === undefined
+    ? Math.round(scaledAmount)
+    : suppliedAmountMinor;
   if (!Number.isSafeInteger(amountInMinorUnits) || amountInMinorUnits < 1 ||
-      Math.abs(scaledAmount - amountInMinorUnits) > 1e-7) {
+      (suppliedAmountMinor === undefined && Math.abs(scaledAmount - amountInMinorUnits) > 1e-7)) {
     throw new Error('Amount must be a positive value representable in the selected currency');
+  }
+
+  const checkoutItems = lineItems || [{
+    name: productName,
+    quantity: 1,
+    unitAmountMinor: amountInMinorUnits,
+  }];
+  if (!Array.isArray(checkoutItems) || checkoutItems.length < 1 || checkoutItems.length > 20 ||
+      checkoutItems.some((item) =>
+        !item || typeof item.name !== 'string' || item.name.length < 1 || item.name.length > 250 ||
+        !Number.isSafeInteger(item.unitAmountMinor) || item.unitAmountMinor < 1 ||
+        !Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > 99) ||
+      checkoutItems.reduce((total, item) =>
+        total + BigInt(item.unitAmountMinor) * BigInt(item.quantity), 0n) !== BigInt(amountInMinorUnits)) {
+    throw new Error('Checkout line items must match the session amount');
   }
 
   const params = new URLSearchParams({
@@ -33,14 +52,16 @@ async function createCheckoutSession({
     success_url: successUrl,
     cancel_url: cancelUrl,
     client_reference_id: userId,
-    'line_items[0][price_data][currency]': normalizedCurrency,
-    'line_items[0][price_data][unit_amount]': String(amountInMinorUnits),
-    'line_items[0][price_data][product_data][name]': productName,
-    'line_items[0][quantity]': '1',
     'metadata[user_id]': userId,
     'metadata[idempotency_key]': idempotencyKey,
     'payment_intent_data[metadata][user_id]': userId,
     'payment_intent_data[metadata][idempotency_key]': idempotencyKey,
+  });
+  checkoutItems.forEach((item, index) => {
+    params.set(`line_items[${index}][price_data][currency]`, normalizedCurrency);
+    params.set(`line_items[${index}][price_data][unit_amount]`, String(item.unitAmountMinor));
+    params.set(`line_items[${index}][price_data][product_data][name]`, item.name);
+    params.set(`line_items[${index}][quantity]`, String(item.quantity));
   });
   const stripeIdempotencyKey = crypto
     .createHash('sha256')

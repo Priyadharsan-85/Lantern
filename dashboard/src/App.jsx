@@ -2,6 +2,7 @@ import { Component, useCallback, useEffect, useState } from 'react';
 import PulseLine from './components/PulseLine';
 import TraceRow from './components/TraceRow';
 import Waterfall from './components/Waterfall';
+import Shop from './Shop';
 import { checkSession, fetchTraces, fetchTraceDetail, login, logout } from './api';
 import './App.css';
 
@@ -196,6 +197,7 @@ function AppContent() {
         </div>
 
         <div className="topbar__stats">
+          <a className="refresh-btn" href="/shop">Storefront</a>
           <Stat label="traces" value={traces.length} />
           <Stat label="errors" value={errorCount} tone={errorCount > 0 ? 'error' : 'default'} />
           <Stat label="avg" value={`${avgDuration}ms`} />
@@ -307,9 +309,10 @@ function Stat({ label, value, tone = 'default' }) {
 }
 
 export default function App() {
+  const isStorefront = window.location.pathname.replace(/\/+$/, '') === '/shop';
   return (
     <ErrorBoundary>
-      <AppContent />
+      {isStorefront ? <Shop /> : <AppContent />}
     </ErrorBoundary>
   );
 }

@@ -96,8 +96,45 @@ Caddy automatically obtains HTTPS certificates from Let’s Encrypt using the co
 Production payments are deliberately disabled: the payment service returns `503`
 for charge requests and does not accept Stripe webhooks. Do not add Stripe keys
 or enable payments in `.env.production`. Local sandbox checkout is for development
-only; server-owned product pricing and authenticated customer identities must be
-implemented before production payments can be enabled.
+only. Customer accounts use salted scrypt password hashes and signed, HttpOnly
+sessions; active products are served from the PostgreSQL catalog with prices stored
+as integer minor units in INR. The order flow now uses the authenticated customer
+session and computes totals from active catalog rows, but live Stripe enablement
+still needs production webhook routing, live-mode configuration, and account
+security/operational review.
+
+To add a product, insert it through a controlled database/admin workflow. For
+example, `price_minor` is in paise (129900 is ₹1,299.00); new products default to
+inactive and must be explicitly activated after review. The customer API is
+`POST /api/auth/customer/register`, `POST /api/auth/customer/login`,
+`GET /api/auth/customer/me`, and `GET /api/products`. The product list is empty
+until products are added. The customer storefront is available at `/shop`; the
+trace dashboard remains at `/`.
+
+For a local catalog smoke test, add a disposable product directly to the dev
+database and remove it after testing:
+
+```sql
+INSERT INTO products (product_id, name, description, price_minor, currency, active)
+VALUES ('local-example', 'Local example product', 'Sandbox-only fixture', 129900, 'inr', TRUE);
+```
+
+Stripe Checkout displays the server-snapshotted product names, quantities, and
+prices. A temporary `Lantern Sandbox Sample (test only)` item priced at ₹100 has
+been added to the current local database to exercise the storefront. It is not a
+migration or production product; remove it when the sandbox test is complete:
+
+```sql
+DELETE FROM products WHERE product_id = 'lantern-sandbox-sample';
+```
+
+Do not use test fixtures as real production product data.
+
+Authenticated customers submit orders to `POST /api/order` with an `items` array
+of `{ "productId": "...", "quantity": 1 }` entries and an `Idempotency-Key`
+header. The server resolves active products, snapshots their names/prices, and
+computes the INR total; client-supplied user IDs and amounts are ignored. Order
+creation will fail until at least one active catalog product has been configured.
 
 ## 4. Private networking
 
