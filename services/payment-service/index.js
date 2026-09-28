@@ -12,35 +12,15 @@ const isProd = process.env.NODE_ENV === 'production';
 if (isProd && !process.env.COLLECTOR_API_KEY) {
   throw new Error('[payment-service] COLLECTOR_API_KEY is required in production');
 }
-const paymentProvider = process.env.PAYMENT_PROVIDER || (isProd ? 'stripe' : 'simulated');
-if (!['simulated', 'stripe'].includes(paymentProvider)) {
-  throw new Error('[payment-service] PAYMENT_PROVIDER must be "stripe" or "simulated"');
+const paymentProvider = process.env.PAYMENT_PROVIDER || (isProd ? 'disabled' : 'simulated');
+if (!['disabled', 'simulated', 'stripe'].includes(paymentProvider)) {
+  throw new Error('[payment-service] PAYMENT_PROVIDER must be "disabled", "stripe", or "simulated"');
 }
-if (isProd && paymentProvider === 'simulated') {
-  throw new Error('[payment-service] simulated payments are not allowed in production');
-}
-if (isProd && paymentProvider === 'stripe' && !process.env.STRIPE_SECRET_KEY) {
-  throw new Error('[payment-service] STRIPE_SECRET_KEY is required when PAYMENT_PROVIDER=stripe');
+if (isProd && paymentProvider !== 'disabled') {
+  throw new Error('[payment-service] payments must remain disabled in production until pricing and user identity are server-controlled');
 }
 if (paymentProvider === 'stripe' && !/^sk_test_/.test(process.env.STRIPE_SECRET_KEY || '')) {
   throw new Error('[payment-service] only Stripe sandbox keys are supported until server-side product pricing and user identity are implemented');
-}
-if (isProd && paymentProvider === 'stripe' &&
-    (!process.env.STRIPE_WEBHOOK_SECRET || !/^whsec_/.test(process.env.STRIPE_WEBHOOK_SECRET))) {
-  throw new Error('[payment-service] STRIPE_WEBHOOK_SECRET is required for Stripe webhooks');
-}
-if (isProd && paymentProvider === 'stripe') {
-  for (const name of ['STRIPE_SUCCESS_URL', 'STRIPE_CANCEL_URL']) {
-    let url;
-    try {
-      url = new URL(process.env[name]);
-    } catch {
-      throw new Error(`[payment-service] ${name} must be a valid HTTPS URL`);
-    }
-    if (url.protocol !== 'https:') {
-      throw new Error(`[payment-service] ${name} must use HTTPS`);
-    }
-  }
 }
 
 const logger = pino(
@@ -73,6 +53,9 @@ app.disable('x-powered-by');
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(compression());
 app.post('/webhooks/stripe', express.raw({ type: 'application/json', limit: '1mb' }), async (req, res) => {
+  if (paymentProvider === 'disabled') {
+    return res.status(404).json({ error: 'Payments are disabled' });
+  }
   const signature = req.headers['stripe-signature'];
   if (!verifyWebhookSignature(req.body, signature, process.env.STRIPE_WEBHOOK_SECRET)) {
     return res.status(400).json({ error: 'Invalid Stripe webhook signature' });
@@ -160,6 +143,9 @@ const tracer = new Tracer({
 app.use(middleware(tracer));
 
 app.post('/charge', async (req, res) => {
+  if (paymentProvider === 'disabled') {
+    return res.status(503).json({ error: 'Payments are disabled' });
+  }
   const { span } = req;
   const idempotencyKey = req.headers['idempotency-key'];
   const { amount, userId } = req.body || {};

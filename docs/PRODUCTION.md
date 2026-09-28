@@ -15,7 +15,7 @@ This project is now structured for a real production deployment with:
 Copy the sample values and replace them with production-specific secrets:
 
 ```bash
-cp .env.example .env.production
+cp .env.production.example .env.production
 chmod 600 .env.production
 ```
 
@@ -40,13 +40,7 @@ Required production values include:
 - ALERT_EMAIL
 - SMTP_USERNAME
 - SMTP_PASSWORD
-- PAYMENT_PROVIDER
-- STRIPE_SECRET_KEY
-- STRIPE_WEBHOOK_SECRET
-- PAYMENT_CURRENCY
-- PAYMENT_PRODUCT_NAME
-- STRIPE_SUCCESS_URL
-- STRIPE_CANCEL_URL
+- PAYMENT_PROVIDER=disabled
 
 For real deployments, use a secret manager such as:
 
@@ -81,7 +75,7 @@ Use the Stripe CLI to forward events to a localhost-only published payment webho
 ```powershell
 npm install -g @stripe/cli
 stripe login
-stripe listen --forward-to localhost:4002/webhooks/stripe
+stripe listen --events checkout.session.completed --forward-to http://localhost:4002/webhooks/stripe
 ```
 
 Keep `stripe listen` running. Copy the `whsec_...` secret it prints into the
@@ -99,18 +93,11 @@ payments.
 
 Caddy automatically obtains HTTPS certificates from Let’s Encrypt using the configured `TLS_EMAIL` and domains.
 
-Stripe Checkout sends customers to Stripe-hosted payment pages. Configure a Stripe
-webhook endpoint at `https://<APP_DOMAIN>/webhooks/stripe` for
-`checkout.session.completed`, `checkout.session.async_payment_succeeded`,
-`checkout.session.async_payment_failed`, and `checkout.session.expired`. Copy the
-endpoint signing secret (`whsec_...`) into `STRIPE_WEBHOOK_SECRET`. Keep both URLs
-in `.env.production` quoted because they contain shell-significant characters.
-Orders remain pending until a verified webhook confirms payment. Set
-`STRIPE_SUCCESS_URL` to an HTTPS dashboard URL containing the literal
-`{CHECKOUT_SESSION_ID}` placeholder; customers must not be treated as paid based
-only on their browser redirect. This implementation deliberately accepts only
-Stripe sandbox keys: live charging remains disabled until product prices and
-customer identity are derived from trusted server-side data.
+Production payments are deliberately disabled: the payment service returns `503`
+for charge requests and does not accept Stripe webhooks. Do not add Stripe keys
+or enable payments in `.env.production`. Local sandbox checkout is for development
+only; server-owned product pricing and authenticated customer identities must be
+implemented before production payments can be enabled.
 
 ## 4. Private networking
 
@@ -151,8 +138,8 @@ Before public release, verify:
 - `NODE_ENV=production`
 - `CORS_ORIGIN` is a specific domain, not `*`
 - `COLLECTOR_API_KEY` is strong and unique
-- `PAYMENT_PROVIDER=stripe` and `STRIPE_SECRET_KEY` are configured before enabling production payments
-- simulated payments are never enabled in production
+- `PAYMENT_PROVIDER=disabled`; production charge requests are rejected
+- Stripe keys and webhook secrets are not configured in production
 - no DB/Redis ports are published to the internet
 - TLS certificates are valid and renewed automatically
 - monitoring and alerts are active

@@ -168,13 +168,7 @@ services:
       PGPASSWORD: ${PGPASSWORD:?Set PGPASSWORD in .env.production}
       PGDATABASE: ${PGDATABASE:?Set PGDATABASE in .env.production}
       PAYMENT_FAILURE_RATE: ${PAYMENT_FAILURE_RATE:?Set PAYMENT_FAILURE_RATE in .env.production}
-      PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:?Set PAYMENT_PROVIDER in .env.production}
-      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:?Set STRIPE_SECRET_KEY in .env.production}
-      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:?Set STRIPE_WEBHOOK_SECRET in .env.production}
-      PAYMENT_CURRENCY: ${PAYMENT_CURRENCY:?Set PAYMENT_CURRENCY in .env.production}
-      PAYMENT_PRODUCT_NAME: ${PAYMENT_PRODUCT_NAME:?Set PAYMENT_PRODUCT_NAME in .env.production}
-      STRIPE_SUCCESS_URL: ${STRIPE_SUCCESS_URL:?Set STRIPE_SUCCESS_URL in .env.production}
-      STRIPE_CANCEL_URL: ${STRIPE_CANCEL_URL:?Set STRIPE_CANCEL_URL in .env.production}
+      PAYMENT_PROVIDER: disabled
     networks:
       - lantern
     expose:
