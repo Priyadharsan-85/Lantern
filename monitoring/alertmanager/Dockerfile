@@ -1,6 +1,6 @@
 FROM prom/alertmanager:v0.27.0 AS alertmanager
 
-FROM alpine:3.21
+FROM alpine:3.24
 
 RUN apk add --no-cache ca-certificates gettext-envsubst \
     && mkdir -p /alertmanager \
