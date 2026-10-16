@@ -138,7 +138,7 @@ jobs:
 
       - name: Upload upstream image scan reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: upstream-image-vulnerability-reports
           path: ${{ runner.temp }}/trivy-reports/upstream-*.json
