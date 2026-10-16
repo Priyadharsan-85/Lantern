@@ -1,4 +1,4 @@
-FROM prom/alertmanager:v0.27.0 AS alertmanager
+FROM prom/alertmanager:v0.34.1 AS alertmanager
 
 FROM alpine:3.21
 
