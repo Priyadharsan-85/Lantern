@@ -65,7 +65,7 @@ jobs:
         run: |
           set -euo pipefail
           compose_config="$(docker compose --project-name lantern-smoke --env-file .env.production -f docker-compose.prod.yml config --format json)"
-          mapfile -t app_images < <(jq -r '.services | to_entries[] | select(.key as $key | ["collector", "api-gateway", "order-service", "payment-service", "dashboard"] | index($key) != null) | .value.image // ("lantern-smoke-" + .key)' <<< "$compose_config" | sort -u)
+          mapfile -t app_images < <(jq -r '.services | to_entries[] | select(.key as $key | ["collector", "api-gateway", "order-service", "payment-service", "dashboard", "redis"] | index($key) != null) | .value.image // ("lantern-smoke-" + .key)' <<< "$compose_config" | sort -u)
           if (( ${#app_images[@]} == 0 )); then
             echo "No application images were found to scan." >&2
             exit 1
@@ -102,7 +102,7 @@ jobs:
         run: |
           set -euo pipefail
           compose_config="$(docker compose --project-name lantern-smoke --env-file .env.production -f docker-compose.prod.yml config --format json)"
-          mapfile -t upstream_images < <(jq -r '.services | to_entries[] | select(.key as $key | (["collector", "api-gateway", "order-service", "payment-service", "dashboard"] | index($key)) == null) | .value.image // (if .key == "alertmanager" then "lantern-smoke-alertmanager" else empty end)' <<< "$compose_config" | sort -u)
+          mapfile -t upstream_images < <(jq -r '.services | to_entries[] | select(.key as $key | (["collector", "api-gateway", "order-service", "payment-service", "dashboard", "redis"] | index($key)) == null) | .value.image // (if .key == "alertmanager" then "lantern-smoke-alertmanager" else empty end)' <<< "$compose_config" | sort -u)
 
           mkdir -p "$RUNNER_TEMP/trivy-cache" "$RUNNER_TEMP/trivy-reports"
           {

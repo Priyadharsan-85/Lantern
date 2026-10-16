@@ -42,7 +42,9 @@ services:
     restart: "no"
 
   redis:
-    image: redis:7.4-alpine
+    build:
+      context: .
+      dockerfile: deploy/docker/redis.Dockerfile
     networks:
       - lantern
     expose:
