@@ -165,19 +165,35 @@ spans queued temporarily, while queue capacity provides backpressure.
 
 ## 6. Backup strategy
 
-Create a backup:
+Create a compressed PostgreSQL custom-format backup. The script validates the
+archive, writes a SHA-256 checksum, and uses a temporary file so an interrupted
+dump is not mistaken for a complete backup:
 
 ```bash
-BACKUP_DIR=./backups ./scripts/backup-postgres.sh
+ENV_FILE=.env.production \
+COMPOSE_FILE=docker-compose.prod.yml \
+BACKUP_DIR=/mnt/lantern-encrypted-backups \
+bash ./scripts/backup-postgres.sh
 ```
 
-Recommended production backup flow:
+Schedule this command daily using the host's scheduler, with `BACKUP_DIR` set to
+encrypted storage mounted outside the application directory. Copy backups to
+off-host/object storage and enforce a retention policy there; the script does not
+delete older backups.
 
-- run daily Postgres dumps
-- store them off-host or in object storage
-- keep at least 30 days of retention
-- encrypt backups at rest
-- test restores periodically
+Periodically test an archive by restoring it into a temporary database on a
+staging PostgreSQL instance (the configured database user needs permission to
+create databases). The script removes that temporary database only after a
+successful restore and validation; failed restores leave it for investigation:
+
+```bash
+ENV_FILE=.env.staging \
+COMPOSE_FILE=docker-compose.prod.yml \
+bash ./scripts/test-postgres-restore.sh /mnt/lantern-encrypted-backups/lantern-<timestamp>.dump --confirm
+```
+
+Do not point the restore test at a production database instance; it creates a
+temporary database and consumes database resources.
 
 ## 7. Production hardening checklist
 
