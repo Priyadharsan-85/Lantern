@@ -52,7 +52,10 @@ jobs:
         run: cp .env.production.example .env.production
 
       - name: Validate production Compose configuration
-        run: docker compose --project-name lantern-ci --env-file .env.production -f docker-compose.prod.yml config --quiet
+        run: docker compose --project-name lantern-smoke --env-file .env.production -f docker-compose.prod.yml config --quiet
 
       - name: Build production images
-        run: docker compose --project-name lantern-ci --env-file .env.production -f docker-compose.prod.yml build
+        run: docker compose --project-name lantern-smoke --env-file .env.production -f docker-compose.prod.yml build
+
+      - name: Run production tracing smoke test
+        run: bash ./scripts/smoke-test-tracing.sh
