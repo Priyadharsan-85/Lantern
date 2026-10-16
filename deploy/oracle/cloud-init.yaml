@@ -1,0 +1,31 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+packages:
+  - ca-certificates
+  - docker-compose-v2
+  - docker.io
+  - git
+  - ufw
+  - unattended-upgrades
+
+write_files:
+  - path: /etc/docker/daemon.json
+    owner: root:root
+    permissions: "0644"
+    content: |
+      {
+        "live-restore": true,
+        "log-driver": "json-file",
+        "log-opts": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      }
+
+runcmd:
+  - [systemctl, enable, --now, docker]
+  - [usermod, -aG, docker, ubuntu]
+  - [install, -d, -o, ubuntu, -g, ubuntu, -m, "0750", /opt/lantern]
+  - [systemctl, enable, --now, unattended-upgrades]
+  - [systemctl, restart, docker]
