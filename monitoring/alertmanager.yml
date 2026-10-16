@@ -1,0 +1,17 @@
+route:
+  receiver: 'ops-email'
+  group_by: ['alertname', 'service']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 1h
+
+receivers:
+  - name: 'ops-email'
+    email_configs:
+      - to: '${ALERT_EMAIL}'
+        send_resolved: true
+        smarthost: 'smtp.example.com:587'
+        from: 'alertmanager@lantern.example.com'
+        auth_username: '${SMTP_USERNAME}'
+        auth_password: '${SMTP_PASSWORD}'
+        require_tls: true

@@ -231,6 +231,7 @@ services:
       - --storage.tsdb.retention.time=30d
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts:/etc/prometheus/alerts:ro
       - prometheus_data:/prometheus
     networks:
       - lantern

@@ -1,0 +1,22 @@
+groups:
+  - name: lantern-pipeline-health
+    rules:
+      - alert: CollectorDown
+        expr: up{job="collector"} == 0
+        for: 1m
+        labels:
+          service: collector
+          severity: critical
+        annotations:
+          summary: Collector service is down
+          description: Prometheus has been unable to scrape the Lantern collector for more than 1 minute.
+
+      - alert: SpanIngestionFailures
+        expr: increase(lantern_spans_ingested_total{status="failed"}[5m]) > 0
+        for: 1m
+        labels:
+          service: collector
+          severity: warning
+        annotations:
+          summary: Span ingestion is failing
+          description: Span batches have failed to enter the Redis queue during the last 5 minutes.
