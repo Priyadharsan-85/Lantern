@@ -195,32 +195,87 @@ spans queued temporarily, while queue capacity provides backpressure.
 
 ## 6. Backup strategy
 
-Create a compressed PostgreSQL custom-format backup. The script validates the
-archive, writes a SHA-256 checksum, and uses a temporary file so an interrupted
-dump is not mistaken for a complete backup:
+For routine backups, Lantern provides a systemd timer that runs daily. The
+off-site script creates a PostgreSQL custom-format dump, encrypts it with age,
+uploads the encrypted archive and checksum using rclone, and applies a
+configurable retention period. Both tools are free; off-site storage must be
+configured separately, and its available free quota depends on the provider.
+
+Generate an age key pair on a trusted device, not on the application server.
+Keep the private identity offline and configure only its public recipient on the
+server. For example, `age-keygen -o lantern-backup-identity.txt` creates the
+identity, and `age-keygen -y lantern-backup-identity.txt` prints its public
+recipient. Configure an rclone remote as the service user, targeting a dedicated
+backup directory. Keep the rclone config private; it contains storage access
+credentials. Ensure `.env.production` is readable by the `lantern` service user
+with mode `0600`; it contains the database credentials passed to Compose.
+
+Create `/etc/lantern/backup.env` with restrictive permissions (`root:root`,
+mode `0600`), adjusting paths and the rclone destination:
 
 ```bash
-ENV_FILE=.env.production \
-COMPOSE_FILE=docker-compose.prod.yml \
-BACKUP_DIR=/mnt/lantern-encrypted-backups \
-bash ./scripts/backup-postgres.sh
+BACKUP_DIR=/var/backups/lantern
+COMPOSE_FILE=/opt/lantern/docker-compose.prod.yml
+ENV_FILE=/opt/lantern/.env.production
+AGE_RECIPIENT=age1replace_with_your_public_recipient
+RCLONE_REMOTE=drive:Lantern/backups
+RETENTION_DAYS=30
 ```
 
-Schedule this command daily using the host's scheduler, with `BACKUP_DIR` set to
-encrypted storage mounted outside the application directory. Copy backups to
-off-host/object storage and enforce a retention policy there; the script does not
-delete older backups.
-
-Periodically test an archive by restoring it into a temporary database on a
-staging PostgreSQL instance (the configured database user needs permission to
-create databases). The script removes that temporary database only after a
-successful restore and validation; failed restores leave it for investigation:
+The supplied systemd service assumes Lantern is installed at `/opt/lantern` and
+runs as a `lantern` user with Docker access and an rclone config available to
+that user. Give that user read access to the project and `.env.production`, and
+create its private local backup directory:
 
 ```bash
-ENV_FILE=.env.staging \
-COMPOSE_FILE=docker-compose.prod.yml \
-bash ./scripts/test-postgres-restore.sh /mnt/lantern-encrypted-backups/lantern-<timestamp>.dump --confirm
+sudo install -d -o lantern -g lantern -m 0700 /var/backups/lantern
+sudo -u lantern rclone config
 ```
+
+Adjust `deploy/systemd/lantern-backup.service` for your host, install the
+service and timer, then enable and test them:
+
+```bash
+sudo install -D -m 0644 deploy/systemd/lantern-backup.service /etc/systemd/system/lantern-backup.service
+sudo install -D -m 0644 deploy/systemd/lantern-backup.timer /etc/systemd/system/lantern-backup.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now lantern-backup.timer
+sudo systemctl start lantern-backup.service
+sudo systemctl status lantern-backup.service
+sudo journalctl -u lantern-backup.service --since today
+systemctl list-timers lantern-backup.timer
+```
+
+The timer runs daily around 02:15 local time, with a randomized delay, and
+catches up after host downtime. The script retains encrypted local and remote
+copies for `RETENTION_DAYS` (minimum 7), and removes the local plaintext dump
+only after both encrypted files have uploaded successfully. If a backup or
+upload fails, the service exits with an error and keeps local files for recovery.
+Monitor the service logs and storage quota.
+
+To rehearse recovery from off-site, download the encrypted archive and checksum,
+verify the checksum, decrypt it using the offline age identity, and then run the
+existing restore rehearsal against a staging PostgreSQL instance:
+
+```bash
+mkdir -m 700 -p /tmp/lantern-restore
+rclone copyto drive:Lantern/backups/lantern-<timestamp>.dump.age /tmp/lantern-restore/backup.dump.age
+rclone copyto drive:Lantern/backups/lantern-<timestamp>.dump.age.sha256 /tmp/lantern-restore/backup.dump.age.sha256
+cd /tmp/lantern-restore
+sha256sum --check backup.dump.age.sha256
+age --decrypt --identity /secure/offline/lantern-backup-identity.txt --output backup.dump backup.dump.age
+sha256sum backup.dump > backup.dump.sha256
+cd /opt/lantern
+ENV_FILE=/opt/lantern/.env.staging \
+COMPOSE_FILE=/opt/lantern/docker-compose.prod.yml \
+bash ./scripts/test-postgres-restore.sh /tmp/lantern-restore/backup.dump --confirm
+```
+
+Remove the temporary restore files after the rehearsal.
+
+The configured staging database user needs permission to create databases. The
+restore script removes its temporary database only after successful validation;
+failed restores leave it for investigation.
 
 Do not point the restore test at a production database instance; it creates a
 temporary database and consumes database resources.

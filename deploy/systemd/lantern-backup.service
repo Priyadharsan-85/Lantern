@@ -1,0 +1,13 @@
+[Unit]
+Description=Create an encrypted off-site Lantern PostgreSQL backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=lantern
+SupplementaryGroups=docker
+WorkingDirectory=/opt/lantern
+EnvironmentFile=/etc/lantern/backup.env
+UMask=0077
+ExecStart=/usr/bin/bash /opt/lantern/scripts/backup-postgres-offsite.sh

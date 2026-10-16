@@ -7,7 +7,11 @@ cd "$ROOT_DIR"
 BACKUP_DIR="${BACKUP_DIR:-./backups}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
 ENV_FILE="${ENV_FILE:-.env.production}"
-TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+TIMESTAMP="${BACKUP_TIMESTAMP:-$(date -u +%Y%m%dT%H%M%SZ)}"
+if [[ ! "$TIMESTAMP" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]; then
+  echo "BACKUP_TIMESTAMP must use UTC format YYYYMMDDTHHMMSSZ." >&2
+  exit 1
+fi
 BACKUP_PATH="$BACKUP_DIR/lantern-$TIMESTAMP.dump"
 CHECKSUM_PATH="$BACKUP_PATH.sha256"
 
