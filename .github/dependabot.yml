@@ -1,0 +1,114 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      production-npm-dependencies:
+        dependency-type: production
+        update-types:
+          - minor
+          - patch
+      development-npm-dependencies:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: npm
+    directory: /dashboard
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      dashboard-dependencies:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: npm
+    directory: /packages/collector
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      collector-dependencies:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: npm
+    directory: /packages/sdk
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      sdk-dependencies:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: npm
+    directory: /services/api-gateway
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      api-gateway-dependencies:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: npm
+    directory: /services/order-service
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      order-service-dependencies:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: npm
+    directory: /services/payment-service
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      payment-service-dependencies:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: docker
+    directory: /dashboard
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: docker
+    directory: /monitoring/alertmanager
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
