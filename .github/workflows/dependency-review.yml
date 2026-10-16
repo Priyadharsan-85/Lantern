@@ -1,19 +1,41 @@
-name: Dependency Review
+name: Production Dependency Audit
 
 on:
+  push:
+    branches:
+      - main
   pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: "41 5 * * 1"
 
 permissions:
   contents: read
-  pull-requests: read
+
+concurrency:
+  group: dependency-audit-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  dependency-review:
-    name: Check dependency vulnerabilities
+  audit:
+    name: Audit production dependencies
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
-      - name: Review dependency changes
-        uses: actions/dependency-review-action@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          fail-on-severity: high
+          node-version: 22
+
+      - name: Audit production dependency lockfiles
+        run: |
+          npm audit --omit=dev --audit-level=high --prefix dashboard
+          npm audit --omit=dev --audit-level=high --prefix packages/collector
+          npm audit --omit=dev --audit-level=high --prefix packages/sdk
+          npm audit --omit=dev --audit-level=high --prefix services/api-gateway
+          npm audit --omit=dev --audit-level=high --prefix services/order-service
+          npm audit --omit=dev --audit-level=high --prefix services/payment-service
