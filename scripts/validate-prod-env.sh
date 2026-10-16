@@ -34,6 +34,8 @@ required_vars=(
   PGDATABASE
   REDIS_HOST
   REDIS_PORT
+  SPAN_STREAM_MAX_LENGTH
+  SPAN_PENDING_IDLE_MS
   COLLECTOR_API_KEY
   CORS_ORIGIN
   DASHBOARD_ORIGIN
@@ -55,6 +57,13 @@ required_vars=(
 for var in "${required_vars[@]}"; do
   if [ -z "${!var:-}" ]; then
     echo "Missing required production variable: $var" >&2
+    exit 1
+  fi
+done
+
+for var in SPAN_STREAM_MAX_LENGTH SPAN_PENDING_IDLE_MS; do
+  if [[ ! "${!var}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "$var must be a positive integer." >&2
     exit 1
   fi
 done

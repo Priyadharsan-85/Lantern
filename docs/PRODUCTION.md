@@ -29,6 +29,8 @@ Required production values include:
 - PGDATABASE
 - REDIS_HOST
 - REDIS_PORT
+- SPAN_STREAM_MAX_LENGTH
+- SPAN_PENDING_IDLE_MS
 - COLLECTOR_API_KEY
 - CORS_ORIGIN
 - DASHBOARD_ORIGIN
@@ -151,6 +153,15 @@ Access the stack via:
 Prometheus scrapes the collector metrics endpoint at `/metrics`.
 
 Alertmanager is set up as a template. Configure real notification endpoints in `monitoring/alertmanager.yml` before production use.
+
+Redis Streams retain spans only while they are queued: after a successful
+PostgreSQL write, the consumer acknowledges and deletes the stream entry
+atomically. The queue rejects new batches with HTTP `503` and `Retry-After` when
+it reaches `SPAN_STREAM_MAX_LENGTH` (default `100000`) rather than silently
+trimming unprocessed spans. SDK clients retry failed flushes. The processor uses
+unique consumer IDs and reclaims abandoned pending entries after
+`SPAN_PENDING_IDLE_MS` (default `30000`); a database outage can therefore leave
+spans queued temporarily, while queue capacity provides backpressure.
 
 ## 6. Backup strategy
 

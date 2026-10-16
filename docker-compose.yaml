@@ -58,6 +58,8 @@ services:
       PGDATABASE: lantern
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      SPAN_STREAM_MAX_LENGTH: ${SPAN_STREAM_MAX_LENGTH:-100000}
+      SPAN_PENDING_IDLE_MS: ${SPAN_PENDING_IDLE_MS:-30000}
       NODE_ENV: development
       CORS_ORIGIN: ${CORS_ORIGIN:?Set CORS_ORIGIN in .env}
       COLLECTOR_API_KEY: ${COLLECTOR_API_KEY:-local-development-key}

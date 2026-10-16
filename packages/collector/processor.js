@@ -13,14 +13,7 @@ async function startProcessor() {
       const messages = await readSpans(100);
       if (messages.length === 0) continue;
 
-      // write all spans to PostgreSQL via circuit breaker
-      await Promise.all(messages.map(({ span }) => dbBreaker.execute(() => insertSpan(span))));
-
-      // acknowledge so Redis clears them from the stream
-      const ids = messages.map(({ streamId }) => streamId);
-      await ackSpans(ids);
-
-      console.log(`[Processor] wrote ${messages.length} spans to PostgreSQL`);
+      await processMessages(messages);
     } catch (err) {
       console.error('[Processor] error:', err.message);
       await sleep(1000);
@@ -28,6 +21,21 @@ async function startProcessor() {
   }
 }
 
+async function processMessages(messages) {
+  let processed = 0;
+  for (const { streamId, span } of messages) {
+    try {
+      await dbBreaker.execute(() => insertSpan(span));
+      await ackSpans([streamId]);
+      processed += 1;
+    } catch (err) {
+      console.error('[Processor] span processing failed; leaving message pending for retry:', err.message);
+    }
+  }
+  if (processed > 0) console.log(`[Processor] wrote ${processed} spans to PostgreSQL`);
+  return processed;
+}
+
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-module.exports = { startProcessor };
+module.exports = { startProcessor, processMessages };

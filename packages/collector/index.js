@@ -1,7 +1,7 @@
 require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env') });
 const express  = require('express');
 const promClient = require('prom-client');
-const { setupStream, pushSpans } = require('./queue');
+const { setupStream, pushSpans, StreamCapacityError } = require('./queue');
 const { startProcessor }         = require('./processor');
 const { getTraces, getTraceById } = require('./db');
 
@@ -60,6 +60,10 @@ app.post('/spans', async (req, res) => {
   } catch (err) {
     console.error('[Collector] Failed to queue spans:', err.message);
     spansIngested.inc({ status: 'failed' }, spans.length);
+    if (err instanceof StreamCapacityError) {
+      res.set('Retry-After', '5');
+      return res.status(503).json({ error: 'Span queue is at capacity; retry later' });
+    }
     res.status(500).json({ error: 'Failed to queue spans' });
   }
 });
