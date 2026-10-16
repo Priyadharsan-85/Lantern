@@ -41,6 +41,8 @@ Required production values include:
 - GRAFANA_ADMIN_PASSWORD
 - ALERT_EMAIL
 - SMTP_USERNAME
+- SMTP_SMARTHOST
+- SMTP_FROM
 - SMTP_PASSWORD
 - PAYMENT_PROVIDER=disabled
 
@@ -152,7 +154,35 @@ Access the stack via:
 
 Prometheus scrapes the collector metrics endpoint at `/metrics`.
 
-Alertmanager is set up as a template. Configure real notification endpoints in `monitoring/alertmanager.yml` before production use.
+Alertmanager sends email using the SMTP settings in `.env.production`:
+
+- `SMTP_SMARTHOST`: SMTP server hostname and port, usually port `587` for STARTTLS.
+- `SMTP_FROM`: sender address shown in alert emails.
+- `ALERT_EMAIL`: alert recipient.
+- `SMTP_USERNAME` and `SMTP_PASSWORD`: SMTP credentials. Some email providers require
+  an app-specific password rather than the account password.
+
+The Alertmanager image renders and validates the configuration at startup.
+The SMTP password is written to a private temporary password file instead of
+the rendered YAML, and is not printed in logs. CI validates the rendered
+configuration using Alertmanager's version-matched `amtool`.
+
+After entering real SMTP settings and starting the stack, send a deliberate test
+alert to verify delivery (this sends an email to `ALERT_EMAIL`):
+
+```bash
+docker compose --env-file .env.production -f docker-compose.prod.yml exec alertmanager \
+  /bin/amtool alert add --alertmanager.url=http://localhost:9093 \
+  alertname=SMTPDeliveryTest severity=warning \
+  --start="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --end="$(date -u -d '+2 minutes' +%Y-%m-%dT%H:%M:%SZ)" \
+  --annotation=summary="Configured SMTP delivery test"
+```
+
+Allow at least the configured `group_wait` interval (30 seconds), then check the
+recipient inbox and spam folder. The test alert expires after two minutes. A
+successful command confirms Alertmanager accepted the alert; it does not by
+itself confirm SMTP delivery.
 
 Redis Streams retain spans only while they are queued: after a successful
 PostgreSQL write, the consumer acknowledges and deletes the stream entry

@@ -57,5 +57,8 @@ jobs:
       - name: Build production images
         run: docker compose --project-name lantern-smoke --env-file .env.production -f docker-compose.prod.yml build
 
+      - name: Validate Alertmanager SMTP configuration
+        run: docker compose --project-name lantern-smoke --env-file .env.production -f docker-compose.prod.yml run --rm --no-deps alertmanager --check-config
+
       - name: Run production tracing smoke test
         run: bash ./scripts/smoke-test-tracing.sh

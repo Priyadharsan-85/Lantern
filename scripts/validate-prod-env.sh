@@ -50,6 +50,8 @@ required_vars=(
   GRAFANA_ADMIN_USER
   GRAFANA_ADMIN_PASSWORD
   ALERT_EMAIL
+  SMTP_SMARTHOST
+  SMTP_FROM
   SMTP_USERNAME
   SMTP_PASSWORD
 )
@@ -60,6 +62,23 @@ for var in "${required_vars[@]}"; do
     exit 1
   fi
 done
+
+if [[ ! "$SMTP_SMARTHOST" =~ ^[A-Za-z0-9.-]+:[0-9]{1,5}$ ]]; then
+  echo "SMTP_SMARTHOST must be a hostname and port, for example smtp.example.com:587." >&2
+  exit 1
+fi
+
+for var in ALERT_EMAIL SMTP_FROM; do
+  if [[ ! "${!var}" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]; then
+    echo "$var must be a valid email address." >&2
+    exit 1
+  fi
+done
+
+if [[ ! "$SMTP_USERNAME" =~ ^[A-Za-z0-9._%+-][A-Za-z0-9._%@+-]*$ ]]; then
+  echo "SMTP_USERNAME contains unsupported characters." >&2
+  exit 1
+fi
 
 for var in SPAN_STREAM_MAX_LENGTH SPAN_PENDING_IDLE_MS; do
   if [[ ! "${!var}" =~ ^[1-9][0-9]*$ ]]; then

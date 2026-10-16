@@ -240,11 +240,17 @@ services:
     restart: unless-stopped
 
   alertmanager:
-    image: prom/alertmanager:v0.27.0
-    env_file:
-      - .env.production
+    build:
+      context: .
+      dockerfile: monitoring/alertmanager/Dockerfile
+    environment:
+      ALERT_EMAIL: ${ALERT_EMAIL:?Set ALERT_EMAIL in .env.production}
+      SMTP_FROM: ${SMTP_FROM:?Set SMTP_FROM in .env.production}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:?Set SMTP_PASSWORD in .env.production}
+      SMTP_SMARTHOST: ${SMTP_SMARTHOST:?Set SMTP_SMARTHOST in .env.production}
+      SMTP_USERNAME: ${SMTP_USERNAME:?Set SMTP_USERNAME in .env.production}
     volumes:
-      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml.template:ro
     networks:
       - lantern
     expose:
