@@ -33,3 +33,12 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+      - name: Prepare production environment file
+        run: cp .env.production.example .env.production
+
+      - name: Validate production Compose configuration
+        run: docker compose --env-file .env.production -f docker-compose.prod.yml config --quiet
+
+      - name: Build production images
+        run: docker compose --env-file .env.production -f docker-compose.prod.yml build
