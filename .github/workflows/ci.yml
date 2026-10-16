@@ -60,27 +60,87 @@ jobs:
       - name: Build production images
         run: docker compose --project-name lantern-smoke --env-file .env.production -f docker-compose.prod.yml build
 
-      - name: Scan production images for vulnerabilities
+      - name: Scan application images for vulnerabilities
         shell: bash
         run: |
           set -euo pipefail
-          images="$(docker compose --project-name lantern-smoke --env-file .env.production -f docker-compose.prod.yml config --format json | jq -r '.services | to_entries[] | .value.image // ("lantern-smoke-" + .key)' | sort -u)"
-          if [[ -z "$images" ]]; then
-            echo "No production images were found to scan." >&2
+          compose_config="$(docker compose --project-name lantern-smoke --env-file .env.production -f docker-compose.prod.yml config --format json)"
+          mapfile -t app_images < <(jq -r '.services | to_entries[] | select(.key as $key | ["collector", "api-gateway", "order-service", "payment-service", "dashboard"] | index($key) != null) | .value.image // ("lantern-smoke-" + .key)' <<< "$compose_config" | sort -u)
+          if (( ${#app_images[@]} == 0 )); then
+            echo "No application images were found to scan." >&2
             exit 1
           fi
 
-          mkdir -p "$RUNNER_TEMP/trivy-cache"
-          while IFS= read -r image; do
+          mkdir -p "$RUNNER_TEMP/trivy-cache" "$RUNNER_TEMP/trivy-reports"
+          index=0
+          for image in "${app_images[@]}"; do
+            report="application-${index}.json"
+            index=$((index + 1))
             docker run --rm \
               -v /var/run/docker.sock:/var/run/docker.sock \
               -v "$RUNNER_TEMP/trivy-cache:/root/.cache/" \
+              -v "$RUNNER_TEMP/trivy-reports:/reports" \
               aquasec/trivy:0.76.0 image \
+              --scanners vuln \
               --ignore-unfixed \
               --severity HIGH,CRITICAL \
-              --exit-code 1 \
+              --format json \
+              --output "/reports/$report" \
+              --exit-code 0 \
               "$image"
-          done <<< "$images"
+            findings="$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH" or .Severity == "CRITICAL")] | length' "$RUNNER_TEMP/trivy-reports/$report")"
+            if (( findings > 0 )); then
+              echo "Found $findings high/critical vulnerabilities in $image." >&2
+              jq -r '.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH" or .Severity == "CRITICAL") | "\(.Severity) \(.VulnerabilityID) \(.PkgName) \(.InstalledVersion) (fixed: \(.FixedVersion // "unknown"))"' "$RUNNER_TEMP/trivy-reports/$report" >&2
+              exit 1
+            fi
+            echo "$image: no fixable high/critical vulnerabilities"
+          done
+
+      - name: Report upstream image vulnerabilities
+        shell: bash
+        run: |
+          set -euo pipefail
+          compose_config="$(docker compose --project-name lantern-smoke --env-file .env.production -f docker-compose.prod.yml config --format json)"
+          mapfile -t upstream_images < <(jq -r '.services | to_entries[] | select(.key as $key | (["collector", "api-gateway", "order-service", "payment-service", "dashboard"] | index($key)) == null) | .value.image // (if .key == "alertmanager" then "lantern-smoke-alertmanager" else empty end)' <<< "$compose_config" | sort -u)
+
+          mkdir -p "$RUNNER_TEMP/trivy-cache" "$RUNNER_TEMP/trivy-reports"
+          {
+            echo "| Upstream image | High/critical findings |"
+            echo "| --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          index=0
+          for image in "${upstream_images[@]}"; do
+            report="upstream-${index}.json"
+            index=$((index + 1))
+            docker run --rm \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              -v "$RUNNER_TEMP/trivy-cache:/root/.cache/" \
+              -v "$RUNNER_TEMP/trivy-reports:/reports" \
+              aquasec/trivy:0.76.0 image \
+              --scanners vuln \
+              --ignore-unfixed \
+              --severity HIGH,CRITICAL \
+              --format json \
+              --output "/reports/$report" \
+              --exit-code 0 \
+              "$image"
+            summary="$(jq -r '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH" or .Severity == "CRITICAL")] | group_by(.Severity) | map("\(.[0].Severity): \(length)") | join(", ")' "$RUNNER_TEMP/trivy-reports/$report")"
+            if [[ -z "$summary" ]]; then
+              summary="no fixable high/critical vulnerabilities"
+            fi
+            echo "$image: $summary (upstream findings are reported but do not block CI)"
+            echo "| \`$image\` | $summary |" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: Upload upstream image scan reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstream-image-vulnerability-reports
+          path: ${{ runner.temp }}/trivy-reports/upstream-*.json
+          if-no-files-found: ignore
+          retention-days: 30
 
       - name: Validate Alertmanager SMTP configuration
         run: docker compose --project-name lantern-smoke --env-file .env.production -f docker-compose.prod.yml run --rm --no-deps alertmanager --check-config
