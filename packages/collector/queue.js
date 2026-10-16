@@ -48,9 +48,7 @@ async function setupStream() {
     await redis.xgroup('CREATE', STREAM_KEY, GROUP_NAME, '0', 'MKSTREAM');
     console.log('[Queue] consumer group created');
   } catch (err) {
-    if (!err.message.includes('BUSYGROUP')) {
-      console.error('[Queue] setup error:', err.message);
-    }
+    if (!err.message.includes('BUSYGROUP')) throw err;
   }
 }
 

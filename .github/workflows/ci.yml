@@ -28,17 +28,31 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install dependencies
+      - name: Install root dependencies
         run: npm ci
 
-      - name: Run tests
-        run: npm test
+      - name: Install test runner
+        run: npm install --no-save --package-lock=false jest@29.7.0 supertest@7.0.0
+
+      - name: Install package dependencies
+        run: |
+          npm install --no-save --no-package-lock --no-audit --no-fund --prefix packages/collector
+          npm install --no-save --no-package-lock --no-audit --no-fund --prefix services/api-gateway
+          npm install --no-save --no-package-lock --no-audit --no-fund --prefix services/order-service
+          npm install --no-save --no-package-lock --no-audit --no-fund --prefix services/payment-service
+
+      - name: Run package tests
+        run: |
+          npm test --prefix packages/collector
+          npm test --prefix services/api-gateway
+          npm test --prefix services/order-service
+          npm test --prefix services/payment-service
 
       - name: Prepare production environment file
         run: cp .env.production.example .env.production
 
       - name: Validate production Compose configuration
-        run: docker compose --env-file .env.production -f docker-compose.prod.yml config --quiet
+        run: docker compose --project-name lantern-ci --env-file .env.production -f docker-compose.prod.yml config --quiet
 
       - name: Build production images
-        run: docker compose --env-file .env.production -f docker-compose.prod.yml build
+        run: docker compose --project-name lantern-ci --env-file .env.production -f docker-compose.prod.yml build

@@ -12,9 +12,9 @@ RUN cd packages/collector && npm install && cd ../..
 
 # Copy services
 COPY services ./services
-RUN cd services/api-gateway && npm install && cd ../../.. && \
-    cd services/order-service && npm install && cd ../../.. && \
-    cd services/payment-service && npm install && cd ../../..
+RUN cd services/api-gateway && npm install && cd ../.. && \
+    cd services/order-service && npm install && cd ../.. && \
+    cd services/payment-service && npm install && cd ../..
 
 # Expose ports
 EXPOSE 4000 3000 4001 4002

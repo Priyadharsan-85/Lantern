@@ -139,6 +139,6 @@ describe('production payment disablement', () => {
     process.env.PAYMENT_PROVIDER = 'stripe';
     expect(() => {
       jest.isolateModules(() => require('./index'));
-    }).toThrow('payments must remain disabled in production');
+    }).toThrow('production payments remain disabled');
   });
 });
