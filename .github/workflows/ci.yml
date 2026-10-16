@@ -5,6 +5,9 @@ on:
     branches:
       - main
   pull_request:
+  schedule:
+    - cron: "13 6 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -52,13 +55,13 @@ jobs:
         run: cp .env.production.example .env.production
 
       - name: Pull production base images
-        run: docker compose --project-name lantern-smoke --env-file .env.production -f docker-compose.prod.yml pull --ignore-buildable
+        run: docker compose --project-name lantern-smoke --env-file .env.production -f docker-compose.prod.yml pull --policy always --ignore-buildable
 
       - name: Validate production Compose configuration
         run: docker compose --project-name lantern-smoke --env-file .env.production -f docker-compose.prod.yml config --quiet
 
       - name: Build production images
-        run: docker compose --project-name lantern-smoke --env-file .env.production -f docker-compose.prod.yml build
+        run: docker compose --project-name lantern-smoke --env-file .env.production -f docker-compose.prod.yml build --pull
 
       - name: Scan application images for vulnerabilities
         shell: bash
