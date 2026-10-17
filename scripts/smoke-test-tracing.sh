@@ -81,7 +81,12 @@ async function main() {
   if (queued.received !== 1) throw new Error(`Collector queued an unexpected span count: ${JSON.stringify(queued)}`);
 
   while (Date.now() < deadline) {
-    const response = await fetch(`${baseUrl}/traces/${traceId}`);
+    const response = await fetch(`${baseUrl}/traces/${traceId}`, {
+      headers: {
+        "x-api-key": apiKey,
+        "x-project-id": "prj_internal",
+      },
+    });
     if (response.ok) {
       const spans = await response.json();
       const persisted = spans.find((item) => item.span_id === spanId);
