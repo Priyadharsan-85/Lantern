@@ -64,14 +64,14 @@ async function reserveProjectSpanQuota(projectId, spanCount, monthlyLimit) {
   const result = await query(
     `UPDATE projects
      SET monthly_span_count = CASE
-           WHEN usage_month = ${usageMonth} THEN monthly_span_count + $2
-           ELSE $2
+          WHEN usage_month = ${usageMonth} THEN monthly_span_count + $2::BIGINT
+          ELSE $2::BIGINT
          END,
          usage_month = ${usageMonth}
      WHERE project_id = $1
        AND active = TRUE
-       AND $2 <= $3
-       AND (usage_month <> ${usageMonth} OR monthly_span_count <= $3 - $2)
+       AND $2::BIGINT <= $3::BIGINT
+       AND (usage_month <> ${usageMonth} OR monthly_span_count <= $3::BIGINT - $2::BIGINT)
      RETURNING monthly_span_count`,
     [projectId, spanCount, monthlyLimit]
   );

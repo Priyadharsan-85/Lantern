@@ -62,7 +62,9 @@ describe('tenant-scoped trace persistence', () => {
 
     await expect(reserveProjectSpanQuota('prj_alpha', 5, 100))
       .resolves.toEqual({ allowed: true, used: 25 });
-    expect(mockClient.query.mock.calls[0][0]).toContain('monthly_span_count <= $3 - $2');
+    expect(mockClient.query.mock.calls[0][0]).toContain(
+      'monthly_span_count <= $3::BIGINT - $2::BIGINT'
+    );
     expect(mockClient.query.mock.calls[0][1]).toEqual(['prj_alpha', 5, 100]);
 
     await expect(reserveProjectSpanQuota('prj_alpha', 5, 100))
