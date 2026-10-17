@@ -8,6 +8,7 @@ const helmet  = require('helmet');
 const compression = require('compression');
 const { Pool } = require('pg');
 const { Tracer, middleware } = require('sdk');
+const { sendAccountEmail, validateProductionEmailConfig } = require('./email');
 const scrypt = promisify(crypto.scrypt);
 const PASSWORD_SCRYPT_N = 16384;
 const PASSWORD_SCRYPT_R = 8;
@@ -17,6 +18,8 @@ const PASSWORD_SCRYPT_MAXMEM = 64 * 1024 * 1024;
 const MAX_CART_ITEMS = 20;
 const MAX_ITEM_QUANTITY = 99;
 const MAX_ORDER_MINOR_UNITS = 99_999_999n;
+const EMAIL_VERIFICATION_TTL_HOURS = 24;
+const PASSWORD_RESET_TTL_MINUTES = 60;
 
 const isProd = process.env.NODE_ENV === 'production';
 if (isProd && !process.env.COLLECTOR_API_KEY) {
@@ -26,6 +29,7 @@ if (isProd && (!process.env.CUSTOMER_IDENTITY_SECRET ||
     Buffer.byteLength(process.env.CUSTOMER_IDENTITY_SECRET, 'utf8') < 32)) {
   throw new Error('[order-service] CUSTOMER_IDENTITY_SECRET must be at least 32 characters in production');
 }
+if (isProd) validateProductionEmailConfig();
 
 const logger = pino(
   isProd
@@ -62,6 +66,105 @@ const tracer = new Tracer({
 
 app.use(middleware(tracer));
 
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16);
+  return scrypt(password, salt, PASSWORD_HASH_BYTES, {
+    N: PASSWORD_SCRYPT_N,
+    r: PASSWORD_SCRYPT_R,
+    p: PASSWORD_SCRYPT_P,
+    maxmem: PASSWORD_SCRYPT_MAXMEM,
+  }).then((hash) => [
+    'scrypt',
+    PASSWORD_SCRYPT_N,
+    PASSWORD_SCRYPT_R,
+    PASSWORD_SCRYPT_P,
+    salt.toString('base64url'),
+    hash.toString('base64url'),
+  ].join('$'));
+}
+
+async function withTransaction(callback) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await callback(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function createAccountToken(customerId, purpose, lifetimeSeconds) {
+  const token = crypto.randomBytes(32).toString('base64url');
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  await withTransaction(async (client) => {
+    await client.query(
+      `UPDATE customer_auth_tokens
+       SET consumed_at = NOW()
+       WHERE customer_id = $1 AND purpose = $2 AND consumed_at IS NULL`,
+      [customerId, purpose]
+    );
+    await client.query(
+      `INSERT INTO customer_auth_tokens (token_hash, customer_id, purpose, expires_at)
+       VALUES ($1, $2, $3, NOW() + ($4 * INTERVAL '1 second'))`,
+      [tokenHash, customerId, purpose, lifetimeSeconds]
+    );
+  });
+  return token;
+}
+
+function accountLink(token, action) {
+  const origin = (process.env.PUBLIC_APP_URL || process.env.DASHBOARD_ORIGIN || 'http://localhost:8080')
+    .replace(/\/+$/, '');
+  const url = new URL(origin);
+  url.searchParams.set(action, token);
+  return url.toString();
+}
+
+async function sendVerificationEmail(customer) {
+  const link = accountLink(
+    await createAccountToken(customer.id, 'email_verification', EMAIL_VERIFICATION_TTL_HOURS * 3600),
+    'verifyEmail'
+  );
+  await sendAccountEmail({
+    to: customer.email,
+    subject: 'Verify your Lantern account',
+    text: `Verify your Lantern account within ${EMAIL_VERIFICATION_TTL_HOURS} hours: ${link}`,
+    html: `<p>Verify your Lantern account within ${EMAIL_VERIFICATION_TTL_HOURS} hours.</p><p><a href="${link}">Verify email address</a></p>`,
+  });
+}
+
+async function sendPasswordResetEmail(customer) {
+  const link = accountLink(
+    await createAccountToken(customer.id, 'password_reset', PASSWORD_RESET_TTL_MINUTES * 60),
+    'resetPassword'
+  );
+  await sendAccountEmail({
+    to: customer.email,
+    subject: 'Reset your Lantern password',
+    text: `Reset your Lantern password within ${PASSWORD_RESET_TTL_MINUTES} minutes: ${link}`,
+    html: `<p>Reset your Lantern password within ${PASSWORD_RESET_TTL_MINUTES} minutes.</p><p><a href="${link}">Reset password</a></p>`,
+  });
+}
+
+async function findCustomerAndVerifyPassword(email, password) {
+  const result = await pool.query(
+    `SELECT customer_id, email, password_hash, email_verified_at
+     FROM customers
+     WHERE LOWER(email) = $1`,
+    [email]
+  );
+  const customer = result.rows[0];
+  const passwordMatches = customer
+    ? await verifyPassword(password, customer.password_hash)
+    : await verifyPassword(password, makeDummyPasswordHash());
+  return customer && passwordMatches ? customer : null;
+}
+
 app.post('/accounts/register', async (req, res) => {
   const email = normalizeEmail(req.body?.email);
   const password = req.body?.password;
@@ -73,26 +176,19 @@ app.post('/accounts/register', async (req, res) => {
 
   try {
     const customerId = `cus_${crypto.randomUUID()}`;
-    const salt = crypto.randomBytes(16);
-    const hash = await scrypt(password, salt, PASSWORD_HASH_BYTES, {
-      N: PASSWORD_SCRYPT_N,
-      r: PASSWORD_SCRYPT_R,
-      p: PASSWORD_SCRYPT_P,
-      maxmem: PASSWORD_SCRYPT_MAXMEM,
-    });
-    const passwordHash = [
-      'scrypt',
-      PASSWORD_SCRYPT_N,
-      PASSWORD_SCRYPT_R,
-      PASSWORD_SCRYPT_P,
-      salt.toString('base64url'),
-      hash.toString('base64url'),
-    ].join('$');
+    const passwordHash = await hashPassword(password);
     await pool.query(
       'INSERT INTO customers (customer_id, email, password_hash) VALUES ($1, $2, $3)',
       [customerId, email, passwordHash]
     );
-    res.status(201).json({ customer: { id: customerId, email } });
+    const customer = { id: customerId, email };
+    try {
+      await sendVerificationEmail(customer);
+      res.status(201).json({ verificationRequired: true, emailSent: true });
+    } catch (emailError) {
+      logger.error({ err: emailError }, '[order-service] Customer registered but verification email could not be sent');
+      res.status(201).json({ verificationRequired: true, emailSent: false });
+    }
   } catch (err) {
     if (err.code === '23505') {
       return res.status(409).json({ error: 'An account with this email already exists' });
@@ -112,7 +208,7 @@ app.post('/accounts/login', async (req, res) => {
 
   try {
     const result = await pool.query(
-      'SELECT customer_id, email, password_hash FROM customers WHERE LOWER(email) = $1',
+      'SELECT customer_id, email, password_hash, email_verified_at FROM customers WHERE LOWER(email) = $1',
       [email]
     );
     const customer = result.rows[0];
@@ -122,10 +218,134 @@ app.post('/accounts/login', async (req, res) => {
     if (!customer || !passwordMatches) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
+    if (!customer.email_verified_at) {
+      return res.status(403).json({
+        error: 'Verify your email address before signing in',
+        code: 'EMAIL_NOT_VERIFIED',
+      });
+    }
     res.json({ customer: { id: customer.customer_id, email: customer.email } });
   } catch (err) {
     logger.error({ err }, '[order-service] Failed to authenticate customer');
     res.status(500).json({ error: 'Unable to sign in' });
+  }
+});
+
+app.post('/accounts/request-verification', async (req, res) => {
+  const email = normalizeEmail(req.body?.email);
+  const password = req.body?.password;
+  if (!isValidEmail(email) || typeof password !== 'string' ||
+      Buffer.byteLength(password, 'utf8') > 128) {
+    return res.status(400).json({ error: 'A valid email and password are required' });
+  }
+
+  try {
+    const customer = await findCustomerAndVerifyPassword(email, password);
+    if (customer && !customer.email_verified_at) {
+      await sendVerificationEmail({ id: customer.customer_id, email: customer.email });
+    }
+    res.status(202).json({ message: 'If the account needs verification, an email will be sent shortly.' });
+  } catch (err) {
+    logger.error({ err }, '[order-service] Could not process verification email request');
+    res.status(503).json({ error: 'Unable to process the request right now' });
+  }
+});
+
+app.post('/accounts/verify-email', async (req, res) => {
+  const token = req.body?.token;
+  if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token)) {
+    return res.status(400).json({ error: 'Verification link is invalid or expired' });
+  }
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  try {
+    const customer = await withTransaction(async (client) => {
+      const consumed = await client.query(
+        `UPDATE customer_auth_tokens
+         SET consumed_at = NOW()
+         WHERE token_hash = $1 AND purpose = 'email_verification'
+           AND consumed_at IS NULL AND expires_at > NOW()
+         RETURNING customer_id`,
+        [tokenHash]
+      );
+      if (!consumed.rowCount) return null;
+      const result = await client.query(
+        `UPDATE customers SET email_verified_at = COALESCE(email_verified_at, NOW())
+         WHERE customer_id = $1 RETURNING customer_id AS id, email`,
+        [consumed.rows[0].customer_id]
+      );
+      return result.rows[0] || null;
+    });
+    if (!customer) return res.status(400).json({ error: 'Verification link is invalid or expired' });
+    res.json({ verified: true });
+  } catch (err) {
+    logger.error({ err }, '[order-service] Could not verify customer email');
+    res.status(500).json({ error: 'Unable to verify email address' });
+  }
+});
+
+app.post('/accounts/request-password-reset', async (req, res) => {
+  const email = normalizeEmail(req.body?.email);
+  if (!isValidEmail(email)) {
+    return res.status(400).json({ error: 'A valid email address is required' });
+  }
+  try {
+    const result = await pool.query(
+      'SELECT customer_id, email FROM customers WHERE LOWER(email) = $1 AND email_verified_at IS NOT NULL',
+      [email]
+    );
+    res.status(202).json({ message: 'If an account exists for that email, password reset instructions will be sent.' });
+    if (result.rows[0]) {
+      try {
+        await sendPasswordResetEmail({ id: result.rows[0].customer_id, email: result.rows[0].email });
+      } catch (emailError) {
+        logger.error({ err: emailError }, '[order-service] Could not send password reset email');
+      }
+    }
+  } catch (err) {
+    logger.error({ err }, '[order-service] Could not process password reset request');
+    res.status(503).json({ error: 'Unable to process the request right now' });
+  }
+});
+
+app.post('/accounts/reset-password', async (req, res) => {
+  const token = req.body?.token;
+  const password = req.body?.password;
+  if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token) ||
+      !isValidPassword(password)) {
+    return res.status(400).json({
+      error: 'A valid reset link and a password between 12 and 128 UTF-8 bytes are required',
+    });
+  }
+
+  try {
+    const passwordHash = await hashPassword(password);
+    const customerId = await withTransaction(async (client) => {
+      const consumed = await client.query(
+        `UPDATE customer_auth_tokens
+         SET consumed_at = NOW()
+         WHERE token_hash = $1 AND purpose = 'password_reset'
+           AND consumed_at IS NULL AND expires_at > NOW()
+         RETURNING customer_id`,
+        [crypto.createHash('sha256').update(token).digest('hex')]
+      );
+      if (!consumed.rowCount) return null;
+      const id = consumed.rows[0].customer_id;
+      await client.query(
+        'UPDATE customers SET password_hash = $1 WHERE customer_id = $2',
+        [passwordHash, id]
+      );
+      await client.query(
+        `UPDATE customer_auth_tokens SET consumed_at = NOW()
+         WHERE customer_id = $1 AND purpose = 'password_reset' AND consumed_at IS NULL`,
+        [id]
+      );
+      return id;
+    });
+    if (!customerId) return res.status(400).json({ error: 'Reset link is invalid or expired' });
+    res.json({ passwordReset: true, customerId });
+  } catch (err) {
+    logger.error({ err }, '[order-service] Could not reset customer password');
+    res.status(500).json({ error: 'Unable to reset password' });
   }
 });
 

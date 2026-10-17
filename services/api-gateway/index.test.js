@@ -32,6 +32,10 @@ const mockRedis = {
   set: jest.fn().mockResolvedValue('OK'),
   exists: jest.fn().mockResolvedValue(1),
   del: jest.fn().mockResolvedValue(1),
+  sadd: jest.fn().mockResolvedValue(1),
+  srem: jest.fn().mockResolvedValue(1),
+  smembers: jest.fn().mockResolvedValue([]),
+  expire: jest.fn().mockResolvedValue(1),
   eval: jest.fn().mockResolvedValue(1),
   quit: jest.fn().mockResolvedValue('OK'),
 };
@@ -43,7 +47,7 @@ async function customerCookie(email = 'buyer@example.com') {
     data: { customer: { id: 'cus_test_123', email } },
   });
   const response = await request(app)
-    .post('/auth/customer/register')
+    .post('/auth/customer/login')
     .send({ email, password: 'long-password-123' });
   return response.headers['set-cookie'][0];
 }
@@ -61,9 +65,10 @@ describe('API Gateway', () => {
   });
 
   describe('customer account and catalog APIs', () => {
-    it('registers a customer through the order service and starts a customer session', async () => {
+    it('registers a customer and requires email verification before creating a session', async () => {
       axios.post.mockResolvedValueOnce({
-        data: { customer: { id: 'cus_123', email: 'buyer@example.com' } },
+        status: 201,
+        data: { verificationRequired: true, emailSent: true },
       });
 
       const registration = await request(app)
@@ -72,21 +77,67 @@ describe('API Gateway', () => {
 
       expect(registration.status).toBe(201);
       expect(registration.body).toEqual({
-        authenticated: true,
-        customer: { id: 'cus_123', email: 'buyer@example.com' },
+        verificationRequired: true,
+        emailSent: true,
       });
-      expect(registration.headers['set-cookie'][0]).toContain('lantern_customer_session=');
+      expect(registration.headers['set-cookie']).toBeUndefined();
       expect(axios.post).toHaveBeenCalledWith(
         'http://localhost:4001/accounts/register',
         { email: 'buyer@example.com', password: 'long-password-123' },
         { timeout: 10_000 }
       );
+    });
 
-      const session = await request(app)
-        .get('/auth/customer/me')
-        .set('Cookie', registration.headers['set-cookie'][0]);
-      expect(session.status).toBe(200);
-      expect(session.body.customer.id).toBe('cus_123');
+    it('forwards email verification and account recovery actions to the order service', async () => {
+      axios.post
+        .mockResolvedValueOnce({ status: 200, data: { verified: true } })
+        .mockResolvedValueOnce({ status: 202, data: { message: 'If the account needs verification, an email will be sent shortly.' } })
+        .mockResolvedValueOnce({ status: 202, data: { message: 'If an account exists for that email, password reset instructions will be sent.' } })
+        .mockResolvedValueOnce({ status: 200, data: { passwordReset: true, customerId: 'cus_test_123' } });
+      mockRedis.smembers.mockResolvedValueOnce(['existing-session']);
+
+      const verified = await request(app).post('/auth/customer/verify-email').send({ token: 'verify-token' });
+      const resent = await request(app).post('/auth/customer/request-verification')
+        .send({ email: 'buyer@example.com', password: 'long-password-123' });
+      const requested = await request(app).post('/auth/customer/request-password-reset')
+        .send({ email: 'buyer@example.com' });
+      const reset = await request(app).post('/auth/customer/reset-password')
+        .send({ token: 'reset-token', password: 'another-long-password-123' });
+
+      expect(verified.status).toBe(200);
+      expect(resent.status).toBe(202);
+      expect(requested.status).toBe(202);
+      expect(reset.status).toBe(200);
+      expect(reset.body).toEqual({ passwordReset: true });
+      expect(mockRedis.del).toHaveBeenCalledWith('session:existing-session');
+      expect(mockRedis.del).toHaveBeenCalledWith('customer-sessions:cus_test_123');
+      expect(axios.post).toHaveBeenNthCalledWith(
+        1,
+        'http://localhost:4001/accounts/verify-email',
+        { token: 'verify-token' },
+        { timeout: 10_000 }
+      );
+      expect(axios.post).toHaveBeenNthCalledWith(
+        4,
+        'http://localhost:4001/accounts/reset-password',
+        { token: 'reset-token', password: 'another-long-password-123' },
+        { timeout: 10_000 }
+      );
+    });
+
+    it('does not create a customer session when sign-in is rejected for an unverified email', async () => {
+      const error = new Error('Verify your email address before signing in');
+      error.response = {
+        status: 403,
+        data: { error: error.message, code: 'EMAIL_NOT_VERIFIED' },
+      };
+      axios.post.mockRejectedValueOnce(error);
+      const response = await request(app)
+        .post('/auth/customer/login')
+        .send({ email: 'buyer@example.com', password: 'long-password-123' });
+      expect(response.status).toBe(403);
+      expect(response.body.code).toBe('EMAIL_NOT_VERIFIED');
+      expect(response.headers['set-cookie']).toBeUndefined();
     });
 
     it('revokes a customer session at logout', async () => {

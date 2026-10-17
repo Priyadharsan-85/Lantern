@@ -10,6 +10,9 @@ jest.mock('./queue', () => ({
 
 jest.mock('./db', () => ({
   getProjectIdForIngestKey: jest.fn().mockResolvedValue(null),
+  reserveProjectSpanQuota: jest.fn().mockResolvedValue({ allowed: true, used: 1 }),
+  releaseProjectSpanQuota: jest.fn().mockResolvedValue(),
+  deleteExpiredSpans: jest.fn().mockResolvedValue(0),
   getTraces:    jest.fn().mockResolvedValue([
     {
       trace_id:       'abc123',
@@ -149,6 +152,55 @@ describe('Collector', () => {
       expect(pushSpans).toHaveBeenCalledWith([
         expect.objectContaining({ projectId: 'prj_customer_a' }),
       ]);
+    });
+
+    it('rejects a project batch that exceeds the monthly span quota', async () => {
+      const { getProjectIdForIngestKey, reserveProjectSpanQuota } = require('./db');
+      const { pushSpans } = require('./queue');
+      getProjectIdForIngestKey.mockResolvedValueOnce('prj_customer_a');
+      reserveProjectSpanQuota.mockResolvedValueOnce({ allowed: false, reason: 'monthly_limit' });
+
+      const res = await request(app)
+        .post('/spans')
+        .set(userHeaders)
+        .send({ spans: [{ spanId: 's1' }] });
+
+      expect(res.statusCode).toBe(429);
+      expect(res.body.code).toBe('MONTHLY_SPAN_LIMIT_EXCEEDED');
+      expect(res.headers['retry-after']).toBeDefined();
+      expect(pushSpans).not.toHaveBeenCalled();
+    });
+
+    it('fails closed if the quota database is unavailable', async () => {
+      const { getProjectIdForIngestKey, reserveProjectSpanQuota } = require('./db');
+      const { pushSpans } = require('./queue');
+      getProjectIdForIngestKey.mockResolvedValueOnce('prj_customer_a');
+      reserveProjectSpanQuota.mockRejectedValueOnce(new Error('database unavailable'));
+
+      const res = await request(app)
+        .post('/spans')
+        .set(userHeaders)
+        .send({ spans: [{ spanId: 's1' }] });
+
+      expect(res.statusCode).toBe(503);
+      expect(res.body.error).toMatch(/quota is temporarily unavailable/i);
+      expect(pushSpans).not.toHaveBeenCalled();
+    });
+
+    it('releases reserved quota when spans cannot be queued', async () => {
+      const { getProjectIdForIngestKey, reserveProjectSpanQuota, releaseProjectSpanQuota } = require('./db');
+      const { pushSpans, StreamCapacityError } = require('./queue');
+      getProjectIdForIngestKey.mockResolvedValueOnce('prj_customer_a');
+      reserveProjectSpanQuota.mockResolvedValueOnce({ allowed: true, used: 1 });
+      pushSpans.mockRejectedValueOnce(new StreamCapacityError());
+
+      const res = await request(app)
+        .post('/spans')
+        .set(userHeaders)
+        .send({ spans: [{ spanId: 's1' }] });
+
+      expect(res.statusCode).toBe(503);
+      expect(releaseProjectSpanQuota).toHaveBeenCalledWith('prj_customer_a', 1);
     });
   });
 

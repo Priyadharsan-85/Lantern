@@ -6,6 +6,8 @@ import {
   loginCustomer,
   logoutCustomer,
   registerCustomer,
+  requestCustomerVerification,
+  requestPasswordReset,
 } from './api';
 import './Shop.css';
 
@@ -19,18 +21,35 @@ function CustomerAccess({ onAuthenticated }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
 
   async function handleSubmit(event) {
     event.preventDefault();
     setError('');
+    setNotice('');
     setBusy(true);
     try {
-      const result = mode === 'register'
-        ? await registerCustomer(email, password)
-        : await loginCustomer(email, password);
-      onAuthenticated(result.customer);
+      if (mode === 'register') {
+        const result = await registerCustomer(email, password);
+        setMode('login');
+        setNotice(result.emailSent
+          ? 'Account created. Check your email to verify it before signing in.'
+          : 'Account created, but the verification email could not be sent. Try sending a new link from the Lantern dashboard.');
+      } else if (mode === 'resend') {
+        const result = await requestCustomerVerification(email, password);
+        setMode('login');
+        setNotice(result.message);
+      } else if (mode === 'forgot') {
+        const result = await requestPasswordReset(email);
+        setMode('login');
+        setNotice(result.message);
+      } else {
+        const result = await loginCustomer(email, password);
+        onAuthenticated(result.customer);
+      }
     } catch (err) {
+      if (err.code === 'EMAIL_NOT_VERIFIED') setMode('resend');
       setError(err.message);
     } finally {
       setBusy(false);
@@ -42,11 +61,15 @@ function CustomerAccess({ onAuthenticated }) {
       <form className="shop-access__card" onSubmit={handleSubmit}>
         <a className="shop-brand" href="/shop"><span className="brand-mark" />lantern</a>
         <p className="shop-eyebrow">Customer account</p>
-        <h1>{mode === 'register' ? 'Create your account' : 'Welcome back'}</h1>
+        <h1>{mode === 'register' ? 'Create your account' : mode === 'forgot' ? 'Reset your password' : mode === 'resend' ? 'Verify your email' : 'Welcome back'}</h1>
         <p className="shop-muted">
           {mode === 'register'
             ? 'Create an account to browse and securely check out.'
-            : 'Sign in to continue to the storefront.'}
+            : mode === 'forgot'
+              ? 'If an account exists, we will email a password reset link.'
+              : mode === 'resend'
+                ? 'Enter your password to request another verification link.'
+                : 'Sign in to continue to the storefront.'}
         </p>
         <label>
           Email
@@ -59,11 +82,11 @@ function CustomerAccess({ onAuthenticated }) {
             required
           />
         </label>
-        <label>
+        {mode !== 'forgot' && <label>
           Password
           <input
             type="password"
-            autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
+            autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             minLength={mode === 'register' ? 12 : undefined}
@@ -71,21 +94,25 @@ function CustomerAccess({ onAuthenticated }) {
             required
           />
           {mode === 'register' && <span className="shop-field-hint">Use at least 12 characters.</span>}
-        </label>
+        </label>}
+        {notice && <p className="shop-muted" role="status">{notice}</p>}
         {error && <p className="shop-error" role="alert">{error}</p>}
         <button className="shop-button shop-button--primary" type="submit" disabled={busy}>
-          {busy ? 'Please wait…' : mode === 'register' ? 'Create account' : 'Sign in'}
+          {busy ? 'Please wait…' : mode === 'register' ? 'Create account' : mode === 'forgot' ? 'Send reset link' : mode === 'resend' ? 'Send verification link' : 'Sign in'}
         </button>
-        <button
+        {['login', 'register'].includes(mode) && <button
           className="shop-link-button"
           type="button"
           onClick={() => {
             setMode(mode === 'register' ? 'login' : 'register');
             setError('');
+            setNotice('');
           }}
         >
           {mode === 'register' ? 'Already have an account? Sign in' : 'New here? Create an account'}
-        </button>
+        </button>}
+        {mode === 'login' && <button className="shop-link-button" type="button" onClick={() => { setMode('forgot'); setError(''); setNotice(''); }}>Forgot your password?</button>}
+        {['forgot', 'resend'].includes(mode) && <button className="shop-link-button" type="button" onClick={() => { setMode('login'); setError(''); setNotice(''); }}>Back to sign in</button>}
       </form>
     </main>
   );

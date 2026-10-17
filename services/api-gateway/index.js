@@ -142,12 +142,28 @@ async function issueSession(payload) {
   const sid = crypto.randomUUID();
   const session = { ...payload, sid };
   await redis.set(`session:${sid}`, '1', 'EX', SESSION_TTL_SECONDS);
+  if (payload.role === 'customer') {
+    await redis.sadd(`customer-sessions:${payload.customerId}`, sid);
+    await redis.expire(`customer-sessions:${payload.customerId}`, SESSION_TTL_SECONDS);
+  }
   return signSession(session);
 }
 
 async function revokeSession(value) {
   const session = readSignedSession(value);
   if (session?.sid) await redis.del(`session:${session.sid}`);
+  if (session?.role === 'customer' && session.customerId && session.sid) {
+    await redis.srem(`customer-sessions:${session.customerId}`, session.sid);
+  }
+}
+
+async function revokeCustomerSessions(customerId) {
+  const indexKey = `customer-sessions:${customerId}`;
+  const sessionIds = await redis.smembers(indexKey);
+  if (sessionIds.length > 0) {
+    await redis.del(...sessionIds.map((sid) => `session:${sid}`));
+  }
+  await redis.del(indexKey);
 }
 
 async function isSessionActive(session) {
@@ -212,6 +228,20 @@ async function requireCustomerAuth(req, res, next) {
 const dashboardLoginLimit = rateLimit({ name: 'dashboard-login', max: 10, windowSeconds: 900 });
 const customerRegisterLimit = rateLimit({ name: 'customer-register', max: 5, windowSeconds: 900 });
 const customerLoginLimit = rateLimit({ name: 'customer-login', max: 10, windowSeconds: 900 });
+const customerVerifyLimit = rateLimit({ name: 'customer-verify', max: 10, windowSeconds: 900 });
+const customerResendVerificationLimit = rateLimit({
+  name: 'customer-resend-verification',
+  max: 3,
+  windowSeconds: 900,
+  key: (req) => `${req.ip}:${String(req.body?.email || '').trim().toLowerCase()}`,
+});
+const customerPasswordResetRequestLimit = rateLimit({
+  name: 'customer-password-reset-request',
+  max: 3,
+  windowSeconds: 900,
+  key: (req) => `${req.ip}:${String(req.body?.email || '').trim().toLowerCase()}`,
+});
+const customerPasswordResetLimit = rateLimit({ name: 'customer-password-reset', max: 5, windowSeconds: 900 });
 const customerOrderLimit = rateLimit({
   name: 'customer-order',
   max: 30,
@@ -304,15 +334,7 @@ app.post('/auth/customer/register', customerRegisterLimit, async (req, res) => {
       { email: req.body?.email, password: req.body?.password },
       { timeout: 10_000 }
     );
-    const customer = response.data.customer;
-    const exp = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
-    setCustomerSessionCookie(res, await issueSession({
-      role: 'customer',
-      customerId: customer.id,
-      email: customer.email,
-      exp,
-    }));
-    res.status(201).json({ authenticated: true, customer });
+    res.status(response.status || 201).json(response.data);
   } catch (err) {
     if (err.response) {
       const status = err.response.status || 500;
@@ -320,6 +342,62 @@ app.post('/auth/customer/register', customerRegisterLimit, async (req, res) => {
     }
     logger.error({ err }, '[api-gateway] Could not create customer session');
     res.status(503).json({ error: 'Authentication is temporarily unavailable' });
+  }
+});
+
+app.post('/auth/customer/request-verification', customerResendVerificationLimit, async (req, res) => {
+  try {
+    const response = await axios.post(
+      orderServiceUrl('/accounts/request-verification'),
+      { email: req.body?.email, password: req.body?.password },
+      { timeout: 10_000 }
+    );
+    res.status(response.status || 202).json(response.data);
+  } catch (err) {
+    forwardServiceError(err, res, 'Unable to process verification request');
+  }
+});
+
+app.post('/auth/customer/verify-email', customerVerifyLimit, async (req, res) => {
+  try {
+    const response = await axios.post(
+      orderServiceUrl('/accounts/verify-email'),
+      { token: req.body?.token },
+      { timeout: 10_000 }
+    );
+    res.status(response.status || 200).json(response.data);
+  } catch (err) {
+    forwardServiceError(err, res, 'Unable to verify email address');
+  }
+});
+
+app.post('/auth/customer/request-password-reset', customerPasswordResetRequestLimit, async (req, res) => {
+  try {
+    const response = await axios.post(
+      orderServiceUrl('/accounts/request-password-reset'),
+      { email: req.body?.email },
+      { timeout: 10_000 }
+    );
+    res.status(response.status || 202).json(response.data);
+  } catch (err) {
+    forwardServiceError(err, res, 'Unable to process password reset request');
+  }
+});
+
+app.post('/auth/customer/reset-password', customerPasswordResetLimit, async (req, res) => {
+  try {
+    const response = await axios.post(
+      orderServiceUrl('/accounts/reset-password'),
+      { token: req.body?.token, password: req.body?.password },
+      { timeout: 10_000 }
+    );
+    if (response.data?.passwordReset && response.data.customerId) {
+      await revokeCustomerSessions(response.data.customerId);
+      setCustomerSessionCookie(res, '', 0);
+    }
+    res.status(response.status || 200).json({ passwordReset: response.data?.passwordReset === true });
+  } catch (err) {
+    forwardServiceError(err, res, 'Unable to reset password');
   }
 });
 
@@ -342,7 +420,10 @@ app.post('/auth/customer/login', customerLoginLimit, async (req, res) => {
   } catch (err) {
     if (err.response) {
       const status = err.response.status || 500;
-      return res.status(status).json({ error: err.response.data?.error || 'Unable to sign in' });
+      return res.status(status).json({
+        error: err.response.data?.error || 'Unable to sign in',
+        ...(err.response.data?.code ? { code: err.response.data.code } : {}),
+      });
     }
     logger.error({ err }, '[api-gateway] Could not create customer session');
     res.status(503).json({ error: 'Authentication is temporarily unavailable' });

@@ -46,10 +46,22 @@ project ID in SQL.
 
 ## Current limits
 
-Account registration is public but currently has no email verification,
-password reset, or MFA. Add those account protections before broad public
-launch. Ingest keys are bearer credentials: rotate immediately if exposed.
+Account registration requires email verification, and users can request a
+password reset by email. Configure SMTP delivery before production; users
+cannot sign in until they verify their address. MFA is not yet available.
+Set `SMTP_SMARTHOST`, `SMTP_FROM`, and SMTP credentials, plus `PUBLIC_APP_URL`
+to the HTTPS dashboard URL, in production. SMTP values may be shared with the
+existing alert email configuration.
+Ingest keys are bearer credentials: rotate immediately if exposed.
 Project key rotation is immediate and replaces the sole active key for that
-project. The first release does not include team members, project sharing,
-quotas, retention controls, or project deletion. Production payment behavior
-is unchanged.
+project. Each public project is limited to 100,000 accepted spans per UTC calendar
+month. When the limit is reached, ingestion returns HTTP 429 with a retry time
+for the next month; internal Lantern spans are not charged to customer
+projects. Set `PROJECT_MONTHLY_SPAN_LIMIT` to change the limit.
+
+Spans are retained for seven days by default. Cleanup uses the server-assigned
+database creation time (not the client-supplied span timestamp) and removes old
+rows in bounded batches. Set `SPAN_RETENTION_DAYS` to change the retention
+period. These limits are shared service-wide rather than separately configurable
+per customer. The first release still does not include team members, project
+sharing, or project deletion. Production payment behavior is unchanged.

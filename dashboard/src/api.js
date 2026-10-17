@@ -22,7 +22,10 @@ async function apiFetch(path, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
             } catch {
                 // ignore, keep errorInfo as {}
             }
-            throw new Error(errorInfo.error || `HTTP ${res.status}`);
+            const error = new Error(errorInfo.error || `HTTP ${res.status}`);
+            error.code = errorInfo.code;
+            error.status = res.status;
+            throw error;
         }
 
         // If we get here, res.ok is true, so we expect JSON.
@@ -71,6 +74,38 @@ export async function loginCustomer(email, password) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
+    });
+}
+
+export async function requestCustomerVerification(email, password) {
+    return apiFetch('/auth/customer/request-verification', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+    });
+}
+
+export async function verifyCustomerEmail(token) {
+    return apiFetch('/auth/customer/verify-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+    });
+}
+
+export async function requestPasswordReset(email) {
+    return apiFetch('/auth/customer/request-password-reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+    });
+}
+
+export async function resetCustomerPassword(token, password) {
+    return apiFetch('/auth/customer/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, password }),
     });
 }
 

@@ -1,4 +1,14 @@
 const request = require('supertest');
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+const { promisify } = require('util');
+const scrypt = promisify(crypto.scrypt);
+const testPasswordHash = async (password) => {
+  const salt = Buffer.alloc(16, 1);
+  const hash = await scrypt(password, salt, 64, { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
+  return `scrypt$16384$8$1$${salt.toString('base64url')}$${hash.toString('base64url')}`;
+};
 
 const mockPool = {
   on: jest.fn(),
@@ -13,7 +23,12 @@ const mockClient = {
 
 jest.mock('pg', () => ({ Pool: jest.fn(() => mockPool) }));
 jest.mock('axios');
+jest.mock('./email', () => ({
+  sendAccountEmail: jest.fn().mockResolvedValue(),
+  validateProductionEmailConfig: jest.fn(),
+}));
 const axios = require('axios');
+const { sendAccountEmail } = require('./email');
 jest.mock('sdk', () => ({
   Tracer: jest.fn(() => ({
     shutdown: jest.fn(),
@@ -51,16 +66,17 @@ describe('customer accounts', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockPool.connect.mockResolvedValue(mockClient);
+    mockClient.query.mockResolvedValue({ rowCount: 1, rows: [] });
   });
 
-  it('stores a salted password hash and returns only the customer profile', async () => {
+  it('stores a salted password hash and starts email verification', async () => {
     mockPool.query.mockResolvedValueOnce({ rowCount: 1, rows: [] });
     const response = await request(app)
       .post('/accounts/register')
       .send({ email: 'Buyer@Example.com', password: 'long-password-123' });
 
     expect(response.status).toBe(201);
-    expect(response.body.customer.email).toBe('buyer@example.com');
+    expect(response.body).toEqual({ verificationRequired: true, emailSent: true });
     expect(mockPool.query).toHaveBeenCalledWith(
       'INSERT INTO customers (customer_id, email, password_hash) VALUES ($1, $2, $3)',
       [
@@ -70,6 +86,16 @@ describe('customer accounts', () => {
       ]
     );
     expect(mockPool.query.mock.calls[0][1][2]).not.toContain('long-password-123');
+    expect(sendAccountEmail).toHaveBeenCalledWith(expect.objectContaining({
+      to: 'buyer@example.com',
+      subject: expect.stringMatching(/verify/i),
+    }));
+    const token = new URL(sendAccountEmail.mock.calls[0][0].text.match(/https?:\S+/)[0])
+      .searchParams.get('verifyEmail');
+    expect(mockClient.query.mock.calls[2][1][0]).toBe(
+      crypto.createHash('sha256').update(token).digest('hex')
+    );
+    expect(mockClient.query.mock.calls[2][1][0]).not.toBe(token);
   });
 
   it('rejects weak passwords without database access', async () => {
@@ -82,16 +108,13 @@ describe('customer accounts', () => {
   });
 
   it('authenticates with the stored password hash', async () => {
-    const registration = await request(app)
-      .post('/accounts/register')
-      .send({ email: 'buyer@example.com', password: 'long-password-123' });
-    const storedHash = mockPool.query.mock.calls[0][1][2];
     mockPool.query.mockResolvedValueOnce({
       rowCount: 1,
       rows: [{
-        customer_id: registration.body.customer.id,
-        email: registration.body.customer.email,
-        password_hash: storedHash,
+        customer_id: 'cus_verified',
+        email: 'buyer@example.com',
+        password_hash: await testPasswordHash('long-password-123'),
+        email_verified_at: '2026-10-17T00:00:00Z',
       }],
     });
 
@@ -100,7 +123,93 @@ describe('customer accounts', () => {
       .send({ email: 'BUYER@example.com', password: 'long-password-123' });
 
     expect(response.status).toBe(200);
-    expect(response.body.customer).toEqual(registration.body.customer);
+    expect(response.body.customer).toEqual({ id: 'cus_verified', email: 'buyer@example.com' });
+  });
+
+  it('blocks sign-in until the email address is verified', async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [{
+        customer_id: 'cus_pending',
+        email: 'buyer@example.com',
+        password_hash: await testPasswordHash('long-password-123'),
+        email_verified_at: null,
+      }],
+    });
+    const response = await request(app)
+      .post('/accounts/login')
+      .send({ email: 'buyer@example.com', password: 'long-password-123' });
+    expect(response.status).toBe(403);
+    expect(response.body.code).toBe('EMAIL_NOT_VERIFIED');
+  });
+
+  it('verifies email with a one-time, hashed token', async () => {
+    const token = crypto.randomBytes(32).toString('base64url');
+    mockClient.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ customer_id: 'cus_pending' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 'cus_pending', email: 'buyer@example.com' }] });
+    const response = await request(app).post('/accounts/verify-email').send({ token });
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ verified: true });
+    expect(mockClient.query.mock.calls[1][1][0]).toBe(
+      crypto.createHash('sha256').update(token).digest('hex')
+    );
+    expect(mockClient.query.mock.calls[2][1]).toEqual(['cus_pending']);
+    expect(mockClient.query.mock.calls[2][0]).toContain('COALESCE(email_verified_at, NOW())');
+  });
+
+  it('rejects expired or reused verification tokens', async () => {
+    const token = crypto.randomBytes(32).toString('base64url');
+    mockClient.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] })
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const response = await request(app).post('/accounts/verify-email').send({ token });
+    expect(response.status).toBe(400);
+    expect(response.body.error).toMatch(/invalid or expired/i);
+    expect(mockClient.query).toHaveBeenCalledTimes(3);
+    expect(mockClient.query.mock.calls[2][0]).toBe('COMMIT');
+  });
+
+  it('sends reset requests with an enumeration-safe response', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
+    const response = await request(app)
+      .post('/accounts/request-password-reset')
+      .send({ email: 'unknown@example.com' });
+    expect(response.status).toBe(202);
+    expect(response.body.message).toMatch(/if an account exists/i);
+    expect(sendAccountEmail).not.toHaveBeenCalled();
+  });
+
+  it('updates the password and consumes all outstanding reset tokens', async () => {
+    const token = crypto.randomBytes(32).toString('base64url');
+    mockClient.query
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ customer_id: 'cus_verified' }] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [] });
+    const response = await request(app)
+      .post('/accounts/reset-password')
+      .send({ token, password: 'a-new-long-password-123' });
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ passwordReset: true, customerId: 'cus_verified' });
+    expect(mockClient.query.mock.calls[1][1][0]).toBe(
+      crypto.createHash('sha256').update(token).digest('hex')
+    );
+    expect(mockClient.query.mock.calls[2][1][1]).toBe('cus_verified');
+    expect(mockClient.query.mock.calls[2][1][0]).toMatch(/^scrypt\$16384\$8\$1\$/);
+    expect(mockClient.query.mock.calls[3][1]).toEqual(['cus_verified']);
+  });
+
+  it('defines expiring one-time account tokens and email verification state in migration 007', () => {
+    const migration = fs.readFileSync(
+      path.resolve(__dirname, '../../infra/migrations/007_customer_email_security.sql'),
+      'utf8'
+    );
+    expect(migration).toMatch(/ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ/i);
+    expect(migration).toMatch(/purpose IN \('email_verification', 'password_reset'\)/i);
+    expect(migration).toMatch(/expires_at TIMESTAMPTZ NOT NULL/i);
+    expect(migration).toMatch(/consumed_at TIMESTAMPTZ/i);
   });
 });
 

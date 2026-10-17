@@ -59,6 +59,60 @@ async function getProjectIdForIngestKey(keyHash) {
   return result.rows[0]?.project_id || null;
 }
 
+async function reserveProjectSpanQuota(projectId, spanCount, monthlyLimit) {
+  const usageMonth = "date_trunc('month', CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date";
+  const result = await query(
+    `UPDATE projects
+     SET monthly_span_count = CASE
+           WHEN usage_month = ${usageMonth} THEN monthly_span_count + $2
+           ELSE $2
+         END,
+         usage_month = ${usageMonth}
+     WHERE project_id = $1
+       AND active = TRUE
+       AND $2 <= $3
+       AND (usage_month <> ${usageMonth} OR monthly_span_count <= $3 - $2)
+     RETURNING monthly_span_count`,
+    [projectId, spanCount, monthlyLimit]
+  );
+  if (result.rows.length > 0) {
+    return { allowed: true, used: Number(result.rows[0].monthly_span_count) };
+  }
+
+  const activeProject = await query(
+    'SELECT 1 FROM projects WHERE project_id = $1 AND active = TRUE',
+    [projectId]
+  );
+  return activeProject.rows.length > 0
+    ? { allowed: false, reason: 'monthly_limit' }
+    : { allowed: false, reason: 'project_inactive' };
+}
+
+async function releaseProjectSpanQuota(projectId, spanCount) {
+  const usageMonth = "date_trunc('month', CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date";
+  await query(
+    `UPDATE projects
+     SET monthly_span_count = GREATEST(0, monthly_span_count - $2)
+     WHERE project_id = $1 AND usage_month = ${usageMonth}`,
+    [projectId, spanCount]
+  );
+}
+
+async function deleteExpiredSpans(cutoff, batchSize) {
+  const result = await query(
+    `DELETE FROM spans
+     WHERE ctid IN (
+       SELECT ctid
+       FROM spans
+       WHERE created_at < $1
+       ORDER BY created_at
+       LIMIT $2
+     )`,
+    [cutoff, batchSize]
+  );
+  return result.rowCount;
+}
+
 async function getTraces(projectId, limit = 50, offset = 0) {
   const sql = `
     SELECT
@@ -92,6 +146,9 @@ async function getTraceById(projectId, traceId) {
 module.exports = {
   insertSpan,
   getProjectIdForIngestKey,
+  reserveProjectSpanQuota,
+  releaseProjectSpanQuota,
+  deleteExpiredSpans,
   getTraces,
   getTraceById,
   query,

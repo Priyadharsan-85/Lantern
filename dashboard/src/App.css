@@ -77,6 +77,13 @@
   font-size: 12px;
 }
 
+.login-notice {
+  margin: 0;
+  color: var(--signal);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .topbar {
   display: flex;
   align-items: center;
@@ -895,4 +902,4 @@
   transition: opacity 0.15s;
 }
 
-.banner__retry:hover { opacity: 1; }
+.banner__retry:hover { opacity: 1; }

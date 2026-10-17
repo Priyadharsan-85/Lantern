@@ -60,6 +60,8 @@ services:
       REDIS_PORT: 6379
       SPAN_STREAM_MAX_LENGTH: ${SPAN_STREAM_MAX_LENGTH:-100000}
       SPAN_PENDING_IDLE_MS: ${SPAN_PENDING_IDLE_MS:-30000}
+      PROJECT_MONTHLY_SPAN_LIMIT: ${PROJECT_MONTHLY_SPAN_LIMIT:-100000}
+      SPAN_RETENTION_DAYS: ${SPAN_RETENTION_DAYS:-7}
       NODE_ENV: development
       CORS_ORIGIN: ${CORS_ORIGIN:?Set CORS_ORIGIN in .env}
       COLLECTOR_API_KEY: ${COLLECTOR_API_KEY:-local-development-key}
@@ -120,6 +122,14 @@ services:
       PGPASSWORD: ${PGPASSWORD:?Set PGPASSWORD in .env}
       PGDATABASE: lantern
       CUSTOMER_IDENTITY_SECRET: ${CUSTOMER_IDENTITY_SECRET:-local-development-customer-identity-secret}
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:8080}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_SMARTHOST: ${SMTP_SMARTHOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
     depends_on:
       collector:
         condition: service_healthy

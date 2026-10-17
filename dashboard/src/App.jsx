@@ -11,8 +11,12 @@ import {
   listProjects,
   loginCustomer,
   logoutCustomer,
+  requestCustomerVerification,
+  requestPasswordReset,
   registerCustomer,
+  resetCustomerPassword,
   rotateProjectKey,
+  verifyCustomerEmail,
 } from './api';
 import './App.css';
 
@@ -74,23 +78,68 @@ function LoadingSkeleton() {
 }
 
 function LoginScreen({ onLogin }) {
-  const [mode, setMode] = useState('login');
+  const searchParams = new URLSearchParams(window.location.search);
+  const verificationToken = searchParams.get('verifyEmail') || '';
+  const resetToken = searchParams.get('resetPassword') || '';
+  const [mode, setMode] = useState(verificationToken ? 'verify' : resetToken ? 'reset' : 'login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState(null);
+  const [notice, setNotice] = useState(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!verificationToken) return;
+    let active = true;
+    verifyCustomerEmail(verificationToken)
+      .then(() => {
+        if (active) {
+          setMode('login');
+          setNotice('Email verified. You can now sign in.');
+          window.history.replaceState({}, '', window.location.pathname);
+        }
+      })
+      .catch((err) => {
+        if (active) {
+          setMode('login');
+          setError(err.message);
+          window.history.replaceState({}, '', window.location.pathname);
+        }
+      });
+    return () => { active = false; };
+  }, [verificationToken]);
 
   async function handleSubmit(event) {
     event.preventDefault();
     setLoading(true);
     setError(null);
+    setNotice(null);
     try {
-      const result = mode === 'register'
-        ? await registerCustomer(email, password)
-        : await loginCustomer(email, password);
-      onLogin();
-      return result;
+      if (mode === 'register') {
+        const result = await registerCustomer(email, password);
+        setMode('login');
+        setNotice(result.emailSent
+          ? 'Account created. Check your email for a verification link before signing in.'
+          : 'Account created, but the verification email could not be sent. Configure email delivery, then request a new link.');
+      } else if (mode === 'resend') {
+        const result = await requestCustomerVerification(email, password);
+        setMode('login');
+        setNotice(result.message);
+      } else if (mode === 'forgot') {
+        const result = await requestPasswordReset(email);
+        setMode('login');
+        setNotice(result.message);
+      } else if (mode === 'reset') {
+        await resetCustomerPassword(resetToken, password);
+        setMode('login');
+        setNotice('Password updated. Sign in with your new password.');
+        window.history.replaceState({}, '', window.location.pathname);
+      } else {
+        await loginCustomer(email, password);
+        onLogin();
+      }
     } catch (err) {
+      if (err.code === 'EMAIL_NOT_VERIFIED') setMode('resend');
       setError(err.message);
     } finally {
       setLoading(false);
@@ -101,29 +150,61 @@ function LoginScreen({ onLogin }) {
     <main className="login-screen">
       <form className="login-card" onSubmit={handleSubmit}>
         <div className="brand-mark" />
-        <h1>{mode === 'register' ? 'Create your Lantern account' : 'Sign in to Lantern'}</h1>
-        <label>
-          Email
-          <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" maxLength={254} required />
-        </label>
-        <label>
-          Password
-          <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={mode === 'register' ? 'new-password' : 'current-password'} minLength={mode === 'register' ? 12 : undefined} maxLength={128} required />
-        </label>
+        <h1>
+          {mode === 'register' ? 'Create your Lantern account'
+            : mode === 'forgot' ? 'Reset your password'
+              : mode === 'reset' ? 'Choose a new password'
+                : mode === 'resend' ? 'Verify your email'
+                  : mode === 'verify' ? 'Verifying your email…'
+                    : 'Sign in to Lantern'}
+        </h1>
+        {mode !== 'reset' && mode !== 'verify' && (
+          <label>
+            Email
+            <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" maxLength={254} required />
+          </label>
+        )}
+        {['register', 'login', 'resend', 'reset'].includes(mode) && (
+          <label>
+            Password
+            <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} minLength={mode === 'register' || mode === 'reset' ? 12 : undefined} maxLength={128} required />
+          </label>
+        )}
+        {notice && <p className="login-notice" role="status">{notice}</p>}
         {error && <p className="login-error" role="alert">{error}</p>}
-        <button className="login-submit" type="submit" disabled={loading}>
-          {loading ? 'Please wait…' : mode === 'register' ? 'Create account' : 'Sign in'}
-        </button>
-        <button
-          className="login-mode-toggle"
-          type="button"
-          onClick={() => {
-            setMode(mode === 'register' ? 'login' : 'register');
-            setError(null);
-          }}
-        >
-          {mode === 'register' ? 'Already have an account? Sign in' : 'New to Lantern? Create an account'}
-        </button>
+        {mode !== 'verify' && (
+          <button className="login-submit" type="submit" disabled={loading}>
+            {loading ? 'Please wait…'
+              : mode === 'register' ? 'Create account'
+                : mode === 'forgot' ? 'Send reset link'
+                  : mode === 'reset' ? 'Update password'
+                    : mode === 'resend' ? 'Send verification link'
+                      : 'Sign in'}
+          </button>
+        )}
+        {mode === 'login' && (
+          <button className="login-mode-toggle" type="button" onClick={() => { setMode('forgot'); setError(null); setNotice(null); }}>
+            Forgot your password?
+          </button>
+        )}
+        {['login', 'register'].includes(mode) && (
+          <button
+            className="login-mode-toggle"
+            type="button"
+            onClick={() => {
+              setMode(mode === 'register' ? 'login' : 'register');
+              setError(null);
+              setNotice(null);
+            }}
+          >
+            {mode === 'register' ? 'Already have an account? Sign in' : 'New to Lantern? Create an account'}
+          </button>
+        )}
+        {['forgot', 'resend'].includes(mode) && (
+          <button className="login-mode-toggle" type="button" onClick={() => { setMode('login'); setError(null); setNotice(null); }}>
+            Back to sign in
+          </button>
+        )}
       </form>
     </main>
   );
@@ -131,7 +212,10 @@ function LoginScreen({ onLogin }) {
 
 // ── Main App ──────────────────────────────────────────────────────────────────
 function AppContent() {
-  const [authenticated, setAuthenticated] = useState(null);
+  const [authenticated, setAuthenticated] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.has('verifyEmail') || params.has('resetPassword') ? false : null;
+  });
   const [traces, setTraces]             = useState([]);
   const [loading, setLoading]           = useState(true);
   const [error, setError]               = useState(null);
@@ -174,6 +258,8 @@ function AppContent() {
   }, [selectedProjectId]);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('verifyEmail') || params.has('resetPassword')) return undefined;
     checkCustomerSession()
       .then(() => setAuthenticated(true))
       .catch(() => setAuthenticated(false));
