@@ -332,7 +332,7 @@ app.post('/auth/customer/register', customerRegisterLimit, async (req, res) => {
     const response = await axios.post(
       `${process.env.ORDER_SERVICE_URL || 'http://localhost:4001'}/accounts/register`,
       { email: req.body?.email, password: req.body?.password },
-      { timeout: 10_000 }
+      { timeout: 30_000 }
     );
     res.status(response.status || 201).json(response.data);
   } catch (err) {
@@ -350,7 +350,7 @@ app.post('/auth/customer/request-verification', customerResendVerificationLimit,
     const response = await axios.post(
       orderServiceUrl('/accounts/request-verification'),
       { email: req.body?.email, password: req.body?.password },
-      { timeout: 10_000 }
+      { timeout: 30_000 }
     );
     res.status(response.status || 202).json(response.data);
   } catch (err) {

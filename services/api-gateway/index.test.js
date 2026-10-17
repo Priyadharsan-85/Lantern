@@ -84,7 +84,7 @@ describe('API Gateway', () => {
       expect(axios.post).toHaveBeenCalledWith(
         'http://localhost:4001/accounts/register',
         { email: 'buyer@example.com', password: 'long-password-123' },
-        { timeout: 10_000 }
+        { timeout: 30_000 }
       );
     });
 
@@ -116,6 +116,12 @@ describe('API Gateway', () => {
         'http://localhost:4001/accounts/verify-email',
         { token: 'verify-token' },
         { timeout: 10_000 }
+      );
+      expect(axios.post).toHaveBeenNthCalledWith(
+        2,
+        'http://localhost:4001/accounts/request-verification',
+        { email: 'buyer@example.com', password: 'long-password-123' },
+        { timeout: 30_000 }
       );
       expect(axios.post).toHaveBeenNthCalledWith(
         4,

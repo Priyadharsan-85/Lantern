@@ -37,7 +37,7 @@ async function apiFetch(path, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
         }
         let errorToThrow = err;
         if (err.name === 'AbortError') {
-            errorToThrow = new Error('Request timed out — collector may be unreachable');
+            errorToThrow = new Error('Request timed out. The service may be slow or temporarily unavailable.');
         }
         throw errorToThrow;
     } finally {
@@ -66,7 +66,7 @@ export async function registerCustomer(email, password) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
-    });
+    }, 35_000);
 }
 
 export async function loginCustomer(email, password) {
@@ -82,7 +82,7 @@ export async function requestCustomerVerification(email, password) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
-    });
+    }, 35_000);
 }
 
 export async function verifyCustomerEmail(token) {
