@@ -32,7 +32,20 @@ jest.mock('sdk', () => ({
 }));
 
 process.env.NODE_ENV = 'test';
+process.env.CUSTOMER_IDENTITY_SECRET = 'test-customer-identity-secret-32-bytes';
 const app = require('./index');
+
+function signedIdentity(customerId, timestamp = String(Math.floor(Date.now() / 1000))) {
+  const signature = require('crypto')
+    .createHmac('sha256', process.env.CUSTOMER_IDENTITY_SECRET)
+    .update(`${customerId}.${timestamp}`)
+    .digest('hex');
+  return {
+    'x-customer-id': customerId,
+    'x-customer-timestamp': timestamp,
+    'x-customer-signature': signature,
+  };
+}
 
 describe('customer accounts', () => {
   beforeEach(() => {
@@ -120,6 +133,78 @@ describe('product catalog', () => {
   });
 });
 
+describe('customer project ownership and ingest keys', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockPool.connect.mockResolvedValue(mockClient);
+  });
+
+  it('rejects project listing without a signed account identity', async () => {
+    const response = await request(app).get('/projects');
+    expect(response.status).toBe(401);
+    expect(mockPool.query).not.toHaveBeenCalled();
+  });
+
+  it('lists only projects owned by the signed-in customer', async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ id: 'prj_owned', name: 'Owned', createdAt: '2026-10-17T00:00:00Z' }],
+    });
+    const response = await request(app)
+      .get('/projects')
+      .set(signedIdentity('cus_owner'));
+    expect(response.status).toBe(200);
+    expect(response.body.projects).toHaveLength(1);
+    expect(mockPool.query.mock.calls[0][0]).toContain('WHERE customer_id = $1 AND active = TRUE');
+    expect(mockPool.query.mock.calls[0][1]).toEqual(['cus_owner']);
+  });
+
+  it('returns not found when another customer requests project access', async () => {
+    mockPool.query.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const response = await request(app)
+      .get('/projects/prj_victim/access')
+      .set(signedIdentity('cus_attacker'));
+    expect(response.status).toBe(404);
+    expect(mockPool.query.mock.calls[0][1]).toEqual(['prj_victim', 'cus_attacker']);
+  });
+
+  it('creates projects with a one-time plaintext key and stores only its hash', async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rows: [{ id: 'prj_new', name: 'New project', createdAt: '2026-10-17T00:00:00Z' }],
+    });
+    const response = await request(app)
+      .post('/projects')
+      .set(signedIdentity('cus_owner'))
+      .send({ name: ' New project ' });
+
+    expect(response.status).toBe(201);
+    expect(response.body.project.id).toBe('prj_new');
+    expect(response.body.ingestKey).toMatch(/^lntr_[A-Za-z0-9_-]{43}$/);
+    const storedHash = mockPool.query.mock.calls[0][1][3];
+    expect(storedHash).toBe(require('crypto').createHash('sha256')
+      .update(response.body.ingestKey).digest('hex'));
+    expect(storedHash).not.toBe(response.body.ingestKey);
+  });
+
+  it('rotates a project key only for its owner and stores the replacement hash', async () => {
+    mockPool.query.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [{ id: 'prj_owned', name: 'Owned', createdAt: '2026-10-17T00:00:00Z' }],
+    });
+    const response = await request(app)
+      .post('/projects/prj_owned/rotate-key')
+      .set(signedIdentity('cus_owner'));
+
+    expect(response.status).toBe(200);
+    expect(response.body.ingestKey).toMatch(/^lntr_[A-Za-z0-9_-]{43}$/);
+    expect(mockPool.query.mock.calls[0][0]).toContain('WHERE project_id = $2 AND customer_id = $3 AND active = TRUE');
+    expect(mockPool.query.mock.calls[0][1]).toEqual([
+      require('crypto').createHash('sha256').update(response.body.ingestKey).digest('hex'),
+      'prj_owned',
+      'cus_owner',
+    ]);
+  });
+});
+
 describe('server-priced orders', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -131,6 +216,24 @@ describe('server-priced orders', () => {
     const response = await request(app)
       .post('/process')
       .send({ userId: 'forged-customer', amount: 0.01, items: [] });
+
+    expect(response.status).toBe(401);
+    expect(mockPool.query).not.toHaveBeenCalled();
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['forged signature', (headers) => ({ ...headers, 'x-customer-signature': '0'.repeat(64) })],
+    ['stale timestamp', (headers) => {
+      const stale = signedIdentity('cus_verified_1', String(Math.floor(Date.now() / 1000) - 120));
+      return { ...headers, ...stale };
+    }],
+  ])('rejects a %s identity claim', async (_description, tamper) => {
+    const headers = tamper(signedIdentity('cus_verified_1'));
+    const response = await request(app)
+      .post('/process')
+      .set(headers)
+      .send({ items: [{ productId: 'prod_1', quantity: 1 }] });
 
     expect(response.status).toBe(401);
     expect(mockPool.query).not.toHaveBeenCalled();
@@ -155,7 +258,7 @@ describe('server-priced orders', () => {
 
     const response = await request(app)
       .post('/process')
-      .set('x-customer-id', 'cus_verified_1')
+      .set(signedIdentity('cus_verified_1'))
       .set('Idempotency-Key', 'order-request-key-1234')
       .send({
         userId: 'forged-customer',
@@ -196,7 +299,7 @@ describe('server-priced orders', () => {
 
     const response = await request(app)
       .post('/process')
-      .set('x-customer-id', 'cus_verified_1')
+      .set(signedIdentity('cus_verified_1'))
       .send({ items: [{ productId: 'inactive_product', quantity: 1 }] });
 
     expect(response.status).toBe(400);

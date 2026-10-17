@@ -3,7 +3,17 @@ import PulseLine from './components/PulseLine';
 import TraceRow from './components/TraceRow';
 import Waterfall from './components/Waterfall';
 import Shop from './Shop';
-import { checkSession, fetchTraces, fetchTraceDetail, login, logout } from './api';
+import {
+  checkCustomerSession,
+  createProject,
+  fetchTraces,
+  fetchTraceDetail,
+  listProjects,
+  loginCustomer,
+  logoutCustomer,
+  registerCustomer,
+  rotateProjectKey,
+} from './api';
 import './App.css';
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
@@ -64,7 +74,8 @@ function LoadingSkeleton() {
 }
 
 function LoginScreen({ onLogin }) {
-  const [username, setUsername] = useState('');
+  const [mode, setMode] = useState('login');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -74,8 +85,11 @@ function LoginScreen({ onLogin }) {
     setLoading(true);
     setError(null);
     try {
-      await login(username, password);
+      const result = mode === 'register'
+        ? await registerCustomer(email, password)
+        : await loginCustomer(email, password);
       onLogin();
+      return result;
     } catch (err) {
       setError(err.message);
     } finally {
@@ -87,18 +101,28 @@ function LoginScreen({ onLogin }) {
     <main className="login-screen">
       <form className="login-card" onSubmit={handleSubmit}>
         <div className="brand-mark" />
-        <h1>Sign in to Lantern</h1>
+        <h1>{mode === 'register' ? 'Create your Lantern account' : 'Sign in to Lantern'}</h1>
         <label>
-          Username
-          <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" required />
+          Email
+          <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" maxLength={254} required />
         </label>
         <label>
           Password
-          <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required />
+          <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete={mode === 'register' ? 'new-password' : 'current-password'} minLength={mode === 'register' ? 12 : undefined} maxLength={128} required />
         </label>
         {error && <p className="login-error" role="alert">{error}</p>}
         <button className="login-submit" type="submit" disabled={loading}>
-          {loading ? 'Signing in…' : 'Sign in'}
+          {loading ? 'Please wait…' : mode === 'register' ? 'Create account' : 'Sign in'}
+        </button>
+        <button
+          className="login-mode-toggle"
+          type="button"
+          onClick={() => {
+            setMode(mode === 'register' ? 'login' : 'register');
+            setError(null);
+          }}
+        >
+          {mode === 'register' ? 'Already have an account? Sign in' : 'New to Lantern? Create an account'}
         </button>
       </form>
     </main>
@@ -116,32 +140,65 @@ function AppContent() {
   const [selectedSpans, setSelectedSpans] = useState(null);
   const [lastSync, setLastSync]         = useState(null);
   const [detailError, setDetailError]   = useState(null);
+  const [projects, setProjects]         = useState([]);
+  const [selectedProjectId, setSelectedProjectId] = useState('');
+  const [projectName, setProjectName]   = useState('');
+  const [projectError, setProjectError] = useState(null);
+  const [issuedKey, setIssuedKey]       = useState('');
+  const [copyStatus, setCopyStatus]     = useState('');
 
   const fetchTracesData = useCallback(async () => {
+    if (!selectedProjectId) {
+      setTraces([]);
+      setLoading(false);
+      return;
+    }
     try {
       setError(null);
-      const data = await fetchTraces({ limit: 50 });
+      const data = await fetchTraces({ projectId: selectedProjectId, limit: 50 });
       setTraces(data);
       setLastSync(new Date());
     } catch (err) {
-      if (err.message === 'Authentication required') {
+      if (/authentication required/i.test(err.message)) {
         setAuthenticated(false);
+        setProjects([]);
+        setSelectedProjectId('');
+        setSelectedSpans(null);
+        setIssuedKey('');
       } else {
         setError(err.message);
       }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedProjectId]);
 
   useEffect(() => {
-    checkSession()
+    checkCustomerSession()
       .then(() => setAuthenticated(true))
       .catch(() => setAuthenticated(false));
   }, []);
 
   useEffect(() => {
     if (!authenticated) return undefined;
+    let active = true;
+    listProjects()
+      .then(({ projects: result = [] }) => {
+        if (!active) return;
+        setProjects(result);
+        setSelectedProjectId((current) =>
+          result.some((project) => project.id === current) ? current : result[0]?.id || ''
+        );
+      })
+      .catch((err) => {
+        if (active) setProjectError(err.message);
+      });
+    return () => { active = false; };
+  }, [authenticated]);
+
+  useEffect(() => {
+    if (!authenticated) return undefined;
+    if (!selectedProjectId) return undefined;
     const initialFetch = setTimeout(fetchTracesData, 0);
     const interval = setInterval(fetchTracesData, 5000);
 
@@ -149,7 +206,7 @@ function AppContent() {
       clearTimeout(initialFetch);
       clearInterval(interval);
     };
-  }, [authenticated, fetchTracesData]);
+  }, [authenticated, selectedProjectId, fetchTracesData]);
 
   if (authenticated === null) return <LoadingSkeleton />;
   if (!authenticated) return <LoginScreen onLogin={() => setAuthenticated(true)} />;
@@ -157,10 +214,61 @@ function AppContent() {
   async function handleSelect(traceId) {
     setDetailError(null);
     try {
-      const spans = await fetchTraceDetail(traceId);
+      const spans = await fetchTraceDetail(traceId, selectedProjectId);
       setSelectedSpans(spans);
     } catch (err) {
       setDetailError(err.message);
+    }
+  }
+
+  async function handleCreateProject(event) {
+    event.preventDefault();
+    setProjectError(null);
+    try {
+      const result = await createProject(projectName);
+      setProjects((current) => [...current, result.project]);
+      setSelectedProjectId(result.project.id);
+      setIssuedKey(result.ingestKey);
+      setProjectName('');
+      setCopyStatus('');
+    } catch (err) {
+      setProjectError(err.message);
+    }
+  }
+
+  async function handleRotateKey() {
+    if (!window.confirm('This immediately invalidates the existing ingest key. Continue?')) return;
+    setProjectError(null);
+    try {
+      const result = await rotateProjectKey(selectedProjectId);
+      setIssuedKey(result.ingestKey);
+      setCopyStatus('');
+    } catch (err) {
+      setProjectError(err.message);
+    }
+  }
+
+  async function handleCopyKey() {
+    try {
+      await navigator.clipboard.writeText(issuedKey);
+      setCopyStatus('Copied to clipboard');
+    } catch {
+      setCopyStatus('Copy unavailable; select and copy the key above.');
+    }
+  }
+
+  async function handleLogout() {
+    try {
+      await logoutCustomer();
+      setAuthenticated(false);
+      setProjects([]);
+      setSelectedProjectId('');
+      setTraces([]);
+      setIssuedKey('');
+      setProjectError(null);
+      setCopyStatus('');
+    } catch (err) {
+      setProjectError(err.message);
     }
   }
 
@@ -205,6 +313,53 @@ function AppContent() {
       </header>
 
       <main className="content">
+        <section className="project-panel" aria-label="Project settings">
+          <label className="project-select">
+            Active project
+            <select
+              value={selectedProjectId}
+              onChange={(event) => {
+                setSelectedProjectId(event.target.value);
+                setTraces([]);
+                setSelectedSpans(null);
+                setLoading(Boolean(event.target.value));
+                setIssuedKey('');
+              }}
+            >
+              <option value="">Select a project</option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>{project.name}</option>
+              ))}
+            </select>
+          </label>
+          <form className="project-create" onSubmit={handleCreateProject}>
+            <input
+              aria-label="New project name"
+              placeholder="New project name"
+              value={projectName}
+              onChange={(event) => setProjectName(event.target.value)}
+              maxLength={80}
+              required
+            />
+            <button className="refresh-btn" type="submit">Create project</button>
+          </form>
+          {selectedProjectId && (
+            <button className="refresh-btn" type="button" onClick={handleRotateKey}>
+              Regenerate ingest key
+            </button>
+          )}
+          {projectError && <p className="project-error" role="alert">{projectError}</p>}
+          {issuedKey && (
+            <div className="project-key" role="status">
+              <label>
+                New ingest key — copy it now; it will not be shown again
+                <input readOnly value={issuedKey} onFocus={(event) => event.target.select()} />
+              </label>
+              <button className="refresh-btn" type="button" onClick={handleCopyKey}>Copy key</button>
+              {copyStatus && <span>{copyStatus}</span>}
+            </div>
+          )}
+        </section>
         <div className="toolbar">
           <div className="search-field">
             <SearchIcon />
@@ -231,7 +386,7 @@ function AppContent() {
             <RefreshIcon />
             {lastSync && <span>synced {lastSync.toLocaleTimeString()}</span>}
           </button>
-          <button className="refresh-btn" onClick={async () => { await logout(); setAuthenticated(false); }}>
+          <button className="refresh-btn" onClick={handleLogout}>
             Sign out
           </button>
         </div>
@@ -254,7 +409,13 @@ function AppContent() {
           </div>
         )}
 
-        {loading ? (
+        {!selectedProjectId ? (
+          <div className="empty-state">
+            <ActivityIcon />
+            <p className="empty-state__title">Create a project to get started</p>
+            <p className="empty-state__sub">Each project has an isolated trace view and its own ingest key.</p>
+          </div>
+        ) : loading ? (
           <LoadingSkeleton />
         ) : filtered.length === 0 ? (
           <div className="empty-state">

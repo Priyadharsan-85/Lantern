@@ -1,65 +1,153 @@
 require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env') });
-const express  = require('express');
-const promClient = require('prom-client');
-const { setupStream, pushSpans, StreamCapacityError } = require('./queue');
+const express       = require('express');
+const crypto        = require('crypto');
+const rateLimit     = require('express-rate-limit');
+const promClient    = require('prom-client');
+const helmet        = require('helmet');
+const cors          = require('cors');
+const compression   = require('compression');
+const { setupStream, pushSpans, getStreamLength, StreamCapacityError } = require('./queue');
 const { startProcessor }         = require('./processor');
-const { getTraces, getTraceById } = require('./db');
+const { getProjectIdForIngestKey, getTraces, getTraceById } = require('./db');
+const logger                     = require('./logger');
 
-const app = express();
-app.use(express.json());
+// ── Startup validation ─────────────────────────────────────────────────────────
+const isProd = process.env.NODE_ENV === 'production';
 
-// Enable CORS for dashboard
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', process.env.CORS_ORIGIN || '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
+if (isProd) {
+  if (!process.env.CORS_ORIGIN || process.env.CORS_ORIGIN === '*') {
+    throw new Error('[Collector] CORS_ORIGIN must be set to a specific origin in production');
   }
+  if (!process.env.COLLECTOR_API_KEY) {
+    throw new Error('[Collector] COLLECTOR_API_KEY is required in production');
+  }
+}
+
+// ── Express app ────────────────────────────────────────────────────────────────
+const app = express();
+app.set('trust proxy', 1);
+app.disable('x-powered-by');
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+app.use(compression());
+app.use(express.json({ limit: '1mb' }));
+
+// ── CORS ──────────────────────────────────────────────────────────────────────
+const allowedOrigin = process.env.CORS_ORIGIN || (isProd ? 'https://lantern.yourdomain.com' : true);
+app.use(cors({
+  origin: isProd ? allowedOrigin : true,
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'x-api-key', 'x-project-id'],
+}));
+
+function matchesSecret(provided, expected) {
+  if (typeof provided !== 'string' || typeof expected !== 'string') return false;
+  const left = Buffer.from(provided);
+  const right = Buffer.from(expected);
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+async function ingestProjectAuth(req, res, next) {
+  const provided = req.get('x-api-key');
+  try {
+    if (matchesSecret(provided, process.env.COLLECTOR_API_KEY)) {
+      req.projectId = 'prj_internal';
+      return next();
+    }
+    if (typeof provided !== 'string' || !provided) {
+      return res.status(401).json({ error: 'Invalid or missing ingest key' });
+    }
+    const keyHash = crypto.createHash('sha256').update(provided).digest('hex');
+    const projectId = await getProjectIdForIngestKey(keyHash);
+    if (!projectId || projectId === 'prj_internal') {
+      return res.status(401).json({ error: 'Invalid or missing ingest key' });
+    }
+    req.projectId = projectId;
+    next();
+  } catch (err) {
+    logger.error({ err }, '[Collector] Failed to authenticate ingest key');
+    res.status(503).json({ error: 'Ingestion authentication is temporarily unavailable' });
+  }
+}
+
+function internalProjectAuth(req, res, next) {
+  if (!matchesSecret(req.get('x-api-key'), process.env.COLLECTOR_API_KEY) ||
+      typeof req.get('x-project-id') !== 'string' ||
+      !req.get('x-project-id')) {
+    return res.status(401).json({ error: 'Authenticated project access required' });
+  }
+  req.projectId = req.get('x-project-id');
   next();
+}
+
+// ── Rate limiter for span ingestion ───────────────────────────────────────────
+const spansLimiter = rateLimit({
+  windowMs: Number(process.env.SPANS_RATE_LIMIT_WINDOW_MS) || 60_000,
+  max:      Number(process.env.SPANS_RATE_LIMIT_MAX)        || 200,
+  keyGenerator: (req) => {
+    const key = req.get('x-api-key');
+    return key ? crypto.createHash('sha256').update(key).digest('hex') : 'missing-ingest-key';
+  },
+  standardHeaders: true,
+  legacyHeaders:   false,
+  message: { error: 'Too many span batches from this IP, slow down.' },
 });
 
-// ── Prometheus metrics ──────────────────────────────────────────────────
+// ── Prometheus metrics ────────────────────────────────────────────────────────
 const spansIngested = new promClient.Counter({
   name: 'lantern_spans_ingested_total',
   help: 'Total spans received',
-  labelNames: ['status']
+  labelNames: ['status'],
 });
 
 const queueDepth = new promClient.Gauge({
   name: 'lantern_queue_depth',
-  help: 'Current span queue size'
+  help: 'Current Redis stream depth (XLEN)',
 });
 
 const processorLatency = new promClient.Histogram({
   name: 'lantern_processor_latency_ms',
   help: 'Span processing latency in milliseconds',
-  buckets: [10, 50, 100, 500, 1000]
+  buckets: [10, 50, 100, 500, 1000],
 });
 
-app.get('/metrics', (req, res) => {
+// Export metrics for use in processor
+module.exports._metrics = { spansIngested, queueDepth, processorLatency };
+
+// ── Refresh queue depth from Redis every 5 s ──────────────────────────────────
+async function refreshQueueDepth() {
+  try {
+    const depth = await getStreamLength();
+    queueDepth.set(depth);
+  } catch (_) { /* non-fatal */ }
+}
+
+app.get('/metrics', async (req, res) => {
+  await refreshQueueDepth();
   res.set('Content-Type', promClient.register.contentType);
-  res.end(promClient.register.metrics());
+  res.end(await promClient.register.metrics());
 });
 
-// ── receive spans from SDK ────────────────────────────────────────────────
-app.post('/spans', async (req, res) => {
+// ── Receive spans from SDK ─────────────────────────────────────────────────────
+app.post('/spans', spansLimiter, ingestProjectAuth, async (req, res) => {
   const { spans } = req.body;
-  if (!Array.isArray(spans)) {
-    return res.status(400).json({ error: 'expected spans array' });
+  if (!Array.isArray(spans) || spans.length === 0) {
+    return res.status(400).json({ error: 'expected a non-empty spans array' });
+  }
+  if (spans.length > 1000) {
+    return res.status(400).json({ error: 'batch too large — max 1000 spans per request' });
   }
 
   spansIngested.inc({ status: 'received' }, spans.length);
-  queueDepth.set(spans.length);
+  const projectSpans = spans.map((span) => ({ ...span, projectId: req.projectId }));
 
   try {
-    await pushSpans(spans);
-    printWaterfall(spans);
-    spansIngested.inc({ status: 'queued' }, spans.length);
+    await pushSpans(projectSpans);
+    printWaterfall(projectSpans);
+    spansIngested.inc({ status: 'queued' }, projectSpans.length);
     res.json({ received: spans.length });
   } catch (err) {
-    console.error('[Collector] Failed to queue spans:', err.message);
-    spansIngested.inc({ status: 'failed' }, spans.length);
+    logger.error({ err }, '[Collector] Failed to queue spans');
+    spansIngested.inc({ status: 'failed' }, projectSpans.length);
     if (err instanceof StreamCapacityError) {
       res.set('Retry-After', '5');
       return res.status(503).json({ error: 'Span queue is at capacity; retry later' });
@@ -68,42 +156,44 @@ app.post('/spans', async (req, res) => {
   }
 });
 
-// ── query endpoints for dashboard (Milestone 3) ───────────────────────────
-app.get('/traces', async (req, res) => {
+// ── Query endpoints for dashboard ─────────────────────────────────────────────
+app.get('/traces', internalProjectAuth, async (req, res) => {
   try {
-    const traces = await getTraces(50);
+    const limit  = Math.min(Number(req.query.limit)  || 50, 200);
+    const offset = Math.max(Number(req.query.offset) || 0,  0);
+    const traces = await getTraces(req.projectId, limit, offset);
     res.json(traces);
   } catch (err) {
-    console.error('[Collector] Failed to fetch traces:', err.message);
+    logger.error({ err }, '[Collector] Failed to fetch traces');
     res.status(500).json({ error: err.message });
   }
 });
 
-app.get('/traces/:traceId', async (req, res) => {
+app.get('/traces/:traceId', internalProjectAuth, async (req, res) => {
   try {
-    const spans = await getTraceById(req.params.traceId);
+    const spans = await getTraceById(req.projectId, req.params.traceId);
     if (!spans.length) return res.status(404).json({ error: 'trace not found' });
     res.json(spans);
   } catch (err) {
-    console.error('[Collector] Failed to fetch trace detail:', err.message);
+    logger.error({ err }, '[Collector] Failed to fetch trace detail');
     res.status(500).json({ error: err.message });
   }
 });
 
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok',
-    service: 'collector',
-    version: '0.2',
-    timestamp: new Date().toISOString()
+  res.json({
+    status:    'ok',
+    service:   'collector',
+    version:   '0.3',
+    timestamp: new Date().toISOString(),
   });
 });
 
-// ── console waterfall (kept from Milestone 1) ─────────────────────────────
+// ── Console waterfall (dev-friendly) ──────────────────────────────────────────
 function printWaterfall(spans) {
-  if (!spans.length) return;
-  const traceId  = spans[0].traceId;
-  const sorted   = [...spans].sort((a, b) => a.startTime - b.startTime);
+  if (!spans.length || isProd) return;   // skip waterfall output in production
+  const traceId    = spans[0].traceId;
+  const sorted     = [...spans].sort((a, b) => a.startTime - b.startTime);
   const traceStart = sorted[0].startTime;
   const totalDur   = Math.max(...spans.map(s => s.duration || 1));
 
@@ -130,34 +220,40 @@ function renderBar(span, traceStart, totalDur) {
   return ' '.repeat(offset) + '█'.repeat(fill);
 }
 
-// ── startup ───────────────────────────────────────────────────────────────
+// ── Startup ───────────────────────────────────────────────────────────────────
 async function start() {
   try {
     await setupStream();
     startProcessor();
 
     app.listen(4000, () => {
-      console.log('╔══════════════════════════════════════╗');
-      console.log('║   Lantern — Collector v0.2           ║');
-      console.log('║   Listening on :4000                 ║');
-      console.log('║   Storage: PostgreSQL + Redis        ║');
-      console.log('║   Metrics: :4000/metrics             ║');
-      console.log('╚══════════════════════════════════════╝\n');
+      logger.info('╔══════════════════════════════════════╗');
+      logger.info('║   Lantern — Collector v0.3           ║');
+      logger.info('║   Listening on :4000                 ║');
+      logger.info('║   Storage: PostgreSQL + Redis        ║');
+      logger.info('║   Metrics: :4000/metrics             ║');
+      logger.info(`║   Auth:    ${process.env.COLLECTOR_API_KEY ? 'API key required     ' : 'disabled (dev mode)  '}║`);
+      logger.info('╚══════════════════════════════════════╝');
     });
   } catch (err) {
-    console.error('[Collector] Failed to start:', err.message);
+    logger.error({ err }, '[Collector] Failed to start');
     process.exit(1);
   }
 }
 
-process.on('SIGTERM', async () => {
-  console.log('[Collector] Received SIGTERM, shutting down gracefully...');
+process.on('SIGTERM', () => {
+  logger.info('[Collector] Received SIGTERM, shutting down gracefully...');
   process.exit(0);
 });
 
-process.on('SIGINT', async () => {
-  console.log('[Collector] Received SIGINT, shutting down gracefully...');
+process.on('SIGINT', () => {
+  logger.info('[Collector] Received SIGINT, shutting down gracefully...');
   process.exit(0);
 });
 
-start();
+// Only boot when run directly — not during tests
+if (require.main === module) {
+  start();
+}
+
+module.exports = app;

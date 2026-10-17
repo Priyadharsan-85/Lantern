@@ -86,6 +86,22 @@ export async function fetchProducts() {
     return apiFetch('/products');
 }
 
+export async function listProjects() {
+      return apiFetch('/projects');
+}
+
+export async function createProject(name) {
+      return apiFetch('/projects', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+      });
+}
+
+export async function rotateProjectKey(projectId) {
+      return apiFetch(`/projects/${encodeURIComponent(projectId)}/rotate-key`, { method: 'POST' });
+}
+
 export async function createOrder(items, idempotencyKey) {
     if (typeof idempotencyKey !== 'string' ||
         idempotencyKey.length < 16 || idempotencyKey.length > 255) {
@@ -101,10 +117,14 @@ export async function createOrder(items, idempotencyKey) {
     }, 20_000);
 }
 
-export async function fetchTraces({ limit = 50, offset = 0 } = {}) {
-    return apiFetch(`/traces?limit=${limit}&offset=${offset}`);
+export async function fetchTraces({ projectId, limit = 50, offset = 0 } = {}) {
+    if (!projectId) throw new Error('Select a project before loading traces');
+    const params = new URLSearchParams({ projectId, limit: String(limit), offset: String(offset) });
+    return apiFetch(`/traces?${params}`);
 }
 
-export async function fetchTraceDetail(traceId) {
-    return apiFetch(`/traces/${encodeURIComponent(traceId)}`);
+export async function fetchTraceDetail(traceId, projectId) {
+    if (!projectId) throw new Error('Select a project before loading trace details');
+    const params = new URLSearchParams({ projectId });
+    return apiFetch(`/traces/${encodeURIComponent(traceId)}?${params}`);
 }

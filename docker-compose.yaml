@@ -89,9 +89,14 @@ services:
       COLLECTOR_API_KEY: ${COLLECTOR_API_KEY:-local-development-key}
       ORDER_SERVICE_URL: http://order-service:4001
       DASHBOARD_ORIGIN: ${DASHBOARD_ORIGIN:-http://localhost:8080}
+      CUSTOMER_IDENTITY_SECRET: ${CUSTOMER_IDENTITY_SECRET:-local-development-customer-identity-secret}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
       NODE_ENV: development
     depends_on:
       collector:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
@@ -114,6 +119,7 @@ services:
       PGUSER: postgres
       PGPASSWORD: ${PGPASSWORD:?Set PGPASSWORD in .env}
       PGDATABASE: lantern
+      CUSTOMER_IDENTITY_SECRET: ${CUSTOMER_IDENTITY_SECRET:-local-development-customer-identity-secret}
     depends_on:
       collector:
         condition: service_healthy

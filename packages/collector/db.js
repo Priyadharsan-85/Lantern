@@ -1,15 +1,21 @@
 require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env') });
 const { Pool } = require('pg');
+const logger = require('./logger');
+
 const pool = new Pool({
-  host: process.env.PGHOST || 'localhost',
-  port: Number(process.env.PGPORT) || 5432,
+  host:     process.env.PGHOST     || 'localhost',
+  port:     Number(process.env.PGPORT) || 5432,
   database: process.env.PGDATABASE || 'lantern',
-  user: process.env.PGUSER || 'postgres',
-  password: process.env.PGPASSWORD || '',
+  user:     process.env.PGUSER     || 'postgres',
+  password: process.env.PGPASSWORD,
+  // Connection pool settings for production
+  max:              20,
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 5_000,
 });
 
 pool.on('error', (err) => {
-  console.error('[DB] unexpected error:', err.message);
+  logger.error({ err }, '[DB] unexpected pool error');
 });
 
 async function query(sql, params = []) {
@@ -24,12 +30,13 @@ async function query(sql, params = []) {
 async function insertSpan(span) {
   const sql = `
     INSERT INTO spans
-      (span_id, trace_id, parent_span_id, name, service_name,
+      (project_id, span_id, trace_id, parent_span_id, name, service_name,
        status, duration, start_time, end_time, tags, logs)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-    ON CONFLICT (span_id) DO NOTHING
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+    ON CONFLICT (project_id, span_id) DO NOTHING
   `;
   await query(sql, [
+    span.projectId || 'prj_internal',
     span.spanId,
     span.traceId,
     span.parentSpanId || null,
@@ -44,7 +51,15 @@ async function insertSpan(span) {
   ]);
 }
 
-async function getTraces(limit = 50) {
+async function getProjectIdForIngestKey(keyHash) {
+  const result = await query(
+    'SELECT project_id FROM projects WHERE ingest_key_hash = $1 AND active = TRUE',
+    [keyHash]
+  );
+  return result.rows[0]?.project_id || null;
+}
+
+async function getTraces(projectId, limit = 50, offset = 0) {
   const sql = `
     SELECT
       trace_id,
@@ -55,22 +70,29 @@ async function getTraces(limit = 50) {
       bool_or(status = 'error')                AS has_error,
       (array_agg(name ORDER BY start_time))[1] AS root_span
     FROM spans
+    WHERE project_id = $1
     GROUP BY trace_id
     ORDER BY start_time DESC
-    LIMIT $1
+    LIMIT $2 OFFSET $3
   `;
-  const result = await query(sql, [limit]);
+  const result = await query(sql, [projectId, limit, offset]);
   return result.rows;
 }
 
-async function getTraceById(traceId) {
+async function getTraceById(projectId, traceId) {
   const sql = `
     SELECT * FROM spans
-    WHERE trace_id = $1
+    WHERE project_id = $1 AND trace_id = $2
     ORDER BY start_time ASC
   `;
-  const result = await query(sql, [traceId]);
+  const result = await query(sql, [projectId, traceId]);
   return result.rows;
 }
 
-module.exports = { insertSpan, getTraces, getTraceById, query };
+module.exports = {
+  insertSpan,
+  getProjectIdForIngestKey,
+  getTraces,
+  getTraceById,
+  query,
+};

@@ -27,6 +27,15 @@ jest.mock('sdk', () => {
 jest.mock('axios');
 const axios   = require('axios');
 const request = require('supertest');
+const mockRedis = {
+  on: jest.fn(),
+  set: jest.fn().mockResolvedValue('OK'),
+  exists: jest.fn().mockResolvedValue(1),
+  del: jest.fn().mockResolvedValue(1),
+  eval: jest.fn().mockResolvedValue(1),
+  quit: jest.fn().mockResolvedValue('OK'),
+};
+jest.mock('ioredis', () => jest.fn(() => mockRedis));
 const app     = require('./index');
 
 async function customerCookie(email = 'buyer@example.com') {
@@ -80,6 +89,44 @@ describe('API Gateway', () => {
       expect(session.body.customer.id).toBe('cus_123');
     });
 
+    it('revokes a customer session at logout', async () => {
+      const cookie = await customerCookie();
+      mockRedis.exists.mockResolvedValueOnce(0);
+      const logoutResponse = await request(app)
+        .post('/auth/customer/logout')
+        .set('Cookie', cookie);
+
+      expect(logoutResponse.status).toBe(200);
+      expect(mockRedis.del).toHaveBeenCalledWith(expect.stringMatching(/^session:/));
+      const session = await request(app)
+        .get('/auth/customer/me')
+        .set('Cookie', cookie);
+      expect(session.status).toBe(401);
+    });
+
+    it('limits repeated customer registration requests through Redis', async () => {
+      mockRedis.eval.mockResolvedValueOnce(6);
+
+      const response = await request(app)
+        .post('/auth/customer/register')
+        .send({ email: 'buyer@example.com', password: 'long-password-123' });
+
+      expect(response.status).toBe(429);
+      expect(response.headers['retry-after']).toBe('900');
+      expect(axios.post).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when Redis cannot enforce registration limits', async () => {
+      mockRedis.eval.mockRejectedValueOnce(new Error('Redis unavailable'));
+
+      const response = await request(app)
+        .post('/auth/customer/register')
+        .send({ email: 'buyer@example.com', password: 'long-password-123' });
+
+      expect(response.status).toBe(503);
+      expect(axios.post).not.toHaveBeenCalled();
+    });
+
     it('forwards catalog requests to the server-owned catalog', async () => {
       axios.get.mockResolvedValueOnce({
         data: { products: [{ id: 'prod_1', priceMinor: '129900', currency: 'inr' }] },
@@ -90,6 +137,114 @@ describe('API Gateway', () => {
       expect(response.status).toBe(200);
       expect(response.body.products[0].priceMinor).toBe('129900');
       expect(axios.get).toHaveBeenCalledWith('http://localhost:4001/catalog', { timeout: 5000 });
+    });
+  });
+
+  describe('project management and scoped trace access', () => {
+    it('lists account-owned projects through the signed internal API', async () => {
+      const cookie = await customerCookie();
+      axios.get.mockResolvedValueOnce({ data: { projects: [{ id: 'prj_owned', name: 'Owned' }] } });
+      const response = await request(app).get('/projects').set('Cookie', cookie);
+      expect(response.status).toBe(200);
+      expect(response.body.projects[0].id).toBe('prj_owned');
+      expect(axios.get).toHaveBeenCalledWith(
+        'http://localhost:4001/projects',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            'x-customer-id': 'cus_test_123',
+            'x-customer-signature': expect.stringMatching(/^[a-f\d]{64}$/),
+          }),
+        })
+      );
+    });
+
+    it('creates projects using the customer session, never exposing the server collector key', async () => {
+      const cookie = await customerCookie();
+      const projectResponse = {
+        data: { project: { id: 'prj_new', name: 'New' }, ingestKey: 'lntr_one-time-secret' },
+      };
+      axios.post.mockResolvedValueOnce(projectResponse);
+      const response = await request(app)
+        .post('/projects')
+        .set('Cookie', cookie)
+        .send({ name: 'New' });
+
+      expect(response.status).toBe(201);
+      expect(response.body).toEqual(projectResponse.data);
+      expect(response.body.ingestKey).toBe('lntr_one-time-secret');
+      expect(response.body).not.toHaveProperty('COLLECTOR_API_KEY');
+    });
+
+    it('forwards public SDK ingestion using only the supplied project key', async () => {
+      axios.post.mockResolvedValueOnce({ status: 200, data: { received: 1 } });
+      const response = await request(app)
+        .post('/spans')
+        .set('x-api-key', 'lntr_project-secret')
+        .send({ spans: [{ spanId: 's1' }] });
+      expect(response.status).toBe(200);
+      expect(axios.post).toHaveBeenCalledWith(
+        'http://localhost:4000/spans',
+        { spans: [{ spanId: 's1' }] },
+        { headers: { 'x-api-key': 'lntr_project-secret' }, timeout: 10_000 }
+      );
+    });
+
+    it('rejects public SDK ingestion without a project key', async () => {
+      const response = await request(app).post('/spans').send({ spans: [{ spanId: 's1' }] });
+      expect(response.status).toBe(401);
+      expect(axios.post).not.toHaveBeenCalled();
+    });
+
+    it('requires project selection for trace reads', async () => {
+      const cookie = await customerCookie();
+      const response = await request(app).get('/traces').set('Cookie', cookie);
+      expect(response.status).toBe(400);
+      expect(axios.get).not.toHaveBeenCalled();
+    });
+
+    it('rejects trace reads without an authenticated customer session', async () => {
+      const response = await request(app).get('/traces?projectId=prj_owned');
+      expect(response.status).toBe(401);
+      expect(axios.get).not.toHaveBeenCalled();
+    });
+
+    it('verifies project ownership before forwarding a project-scoped trace query', async () => {
+      const cookie = await customerCookie();
+      axios.get
+        .mockResolvedValueOnce({ data: { project: { id: 'prj_owned' } } })
+        .mockResolvedValueOnce({ data: [{ trace_id: 'trace_1' }] });
+      const response = await request(app)
+        .get('/traces?projectId=prj_owned&limit=50')
+        .set('Cookie', cookie);
+
+      expect(response.status).toBe(200);
+      expect(axios.get).toHaveBeenNthCalledWith(
+        1,
+        'http://localhost:4001/projects/prj_owned/access',
+        expect.objectContaining({ headers: expect.objectContaining({ 'x-customer-id': 'cus_test_123' }) })
+      );
+      expect(axios.get).toHaveBeenNthCalledWith(
+        2,
+        'http://localhost:4000/traces?projectId=prj_owned&limit=50',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            'x-api-key': process.env.COLLECTOR_API_KEY,
+            'x-project-id': 'prj_owned',
+          }),
+        })
+      );
+    });
+
+    it('rejects cross-account trace access without querying the collector', async () => {
+      const cookie = await customerCookie();
+      const notOwned = new Error('Project not found');
+      notOwned.response = { status: 404, data: { error: 'Project not found' } };
+      axios.get.mockRejectedValueOnce(notOwned);
+      const response = await request(app)
+        .get('/traces/secret-trace?projectId=prj_victim')
+        .set('Cookie', cookie);
+      expect(response.status).toBe(404);
+      expect(axios.get).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -139,10 +294,66 @@ describe('API Gateway', () => {
         'http://localhost:4001/process',
         { items: [{ productId: 'prod_1', quantity: 2 }] },
         expect.objectContaining({
-          headers: expect.objectContaining({ 'x-customer-id': 'cus_test_123' }),
+          headers: expect.objectContaining({
+            'x-customer-id': 'cus_test_123',
+            'x-customer-timestamp': expect.stringMatching(/^\d{10}$/),
+            'x-customer-signature': expect.stringMatching(/^[a-f\d]{64}$/),
+          }),
           timeout: 15_000,
         })
       );
+    });
+  });
+
+  describe('production origin protection', () => {
+    const originalEnv = {
+      NODE_ENV: process.env.NODE_ENV,
+      COLLECTOR_API_KEY: process.env.COLLECTOR_API_KEY,
+      DASHBOARD_AUTH_USER: process.env.DASHBOARD_AUTH_USER,
+      DASHBOARD_AUTH_PASSWORD: process.env.DASHBOARD_AUTH_PASSWORD,
+      SESSION_SECRET: process.env.SESSION_SECRET,
+      CUSTOMER_IDENTITY_SECRET: process.env.CUSTOMER_IDENTITY_SECRET,
+      DASHBOARD_ORIGIN: process.env.DASHBOARD_ORIGIN,
+    };
+
+    afterAll(() => {
+      for (const [key, value] of Object.entries(originalEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    });
+
+    it('rejects cross-origin and origin-less production mutations', async () => {
+      Object.assign(process.env, {
+        NODE_ENV: 'production',
+        COLLECTOR_API_KEY: 'test-collector-key',
+        DASHBOARD_AUTH_USER: 'admin',
+        DASHBOARD_AUTH_PASSWORD: 'test-dashboard-password',
+        SESSION_SECRET: 'test-session-secret-that-is-long-enough',
+        CUSTOMER_IDENTITY_SECRET: 'test-customer-identity-secret-32-bytes',
+        DASHBOARD_ORIGIN: 'https://shop.example.test',
+      });
+      let productionApp;
+      jest.isolateModules(() => {
+        productionApp = require('./index');
+      });
+
+      const noOrigin = await request(productionApp)
+        .post('/auth/customer/register')
+        .send({ email: 'buyer@example.com', password: 'long-password-123' });
+      const foreignOrigin = await request(productionApp)
+        .post('/auth/customer/register')
+        .set('Origin', 'https://attacker.example')
+        .send({ email: 'buyer@example.com', password: 'long-password-123' });
+      axios.post.mockResolvedValueOnce({ status: 200, data: { received: 1 } });
+      const sdkIngest = await request(productionApp)
+        .post('/spans')
+        .set('x-api-key', 'lntr_project-key')
+        .send({ spans: [{ spanId: 's1' }] });
+
+      expect(noOrigin.status).toBe(403);
+      expect(foreignOrigin.status).toBe(403);
+      expect(sdkIngest.status).toBe(200);
     });
   });
 

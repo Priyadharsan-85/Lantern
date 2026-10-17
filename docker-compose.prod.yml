@@ -106,6 +106,9 @@ services:
       COLLECTOR_URL: http://collector:4000
       COLLECTOR_API_KEY: ${COLLECTOR_API_KEY:?Set COLLECTOR_API_KEY in .env.production}
       ORDER_SERVICE_URL: http://order-service:4001
+      CUSTOMER_IDENTITY_SECRET: ${CUSTOMER_IDENTITY_SECRET:?Set CUSTOMER_IDENTITY_SECRET in .env.production}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
       DASHBOARD_ORIGIN: ${DASHBOARD_ORIGIN:?Set DASHBOARD_ORIGIN in .env.production}
       DASHBOARD_AUTH_USER: ${DASHBOARD_AUTH_USER:?Set DASHBOARD_AUTH_USER in .env.production}
       DASHBOARD_AUTH_PASSWORD: ${DASHBOARD_AUTH_PASSWORD:?Set DASHBOARD_AUTH_PASSWORD in .env.production}
@@ -116,6 +119,8 @@ services:
       - "3000"
     depends_on:
       collector:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
@@ -141,6 +146,7 @@ services:
       PGUSER: ${PGUSER:?Set PGUSER in .env.production}
       PGPASSWORD: ${PGPASSWORD:?Set PGPASSWORD in .env.production}
       PGDATABASE: ${PGDATABASE:?Set PGDATABASE in .env.production}
+      CUSTOMER_IDENTITY_SECRET: ${CUSTOMER_IDENTITY_SECRET:?Set CUSTOMER_IDENTITY_SECRET in .env.production}
     networks:
       - lantern
     expose:

@@ -22,6 +22,10 @@ const isProd = process.env.NODE_ENV === 'production';
 if (isProd && !process.env.COLLECTOR_API_KEY) {
   throw new Error('[order-service] COLLECTOR_API_KEY is required in production');
 }
+if (isProd && (!process.env.CUSTOMER_IDENTITY_SECRET ||
+    Buffer.byteLength(process.env.CUSTOMER_IDENTITY_SECRET, 'utf8') < 32)) {
+  throw new Error('[order-service] CUSTOMER_IDENTITY_SECRET must be at least 32 characters in production');
+}
 
 const logger = pino(
   isProd
@@ -125,6 +129,96 @@ app.post('/accounts/login', async (req, res) => {
   }
 });
 
+function requireGatewayCustomer(req, res, next) {
+  if (!verifyGatewayIdentity(
+    req.headers['x-customer-id'],
+    req.headers['x-customer-timestamp'],
+    req.headers['x-customer-signature']
+  )) {
+    return res.status(401).json({ error: 'Verified customer identity is required' });
+  }
+  req.customerId = req.headers['x-customer-id'];
+  next();
+}
+
+function newIngestKey() {
+  const key = `lntr_${crypto.randomBytes(32).toString('base64url')}`;
+  const keyHash = crypto.createHash('sha256').update(key).digest('hex');
+  return { key, keyHash };
+}
+
+app.get('/projects', requireGatewayCustomer, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT project_id AS id, name, created_at AS "createdAt"
+       FROM projects
+       WHERE customer_id = $1 AND active = TRUE
+       ORDER BY created_at, project_id`,
+      [req.customerId]
+    );
+    res.json({ projects: result.rows });
+  } catch (err) {
+    logger.error({ err }, '[order-service] Failed to list customer projects');
+    res.status(500).json({ error: 'Unable to load projects' });
+  }
+});
+
+app.post('/projects', requireGatewayCustomer, async (req, res) => {
+  const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+  if (!name || name.length > 80) {
+    return res.status(400).json({ error: 'Project name must be between 1 and 80 characters' });
+  }
+
+  const projectId = `prj_${crypto.randomUUID()}`;
+  const { key, keyHash } = newIngestKey();
+  try {
+    const result = await pool.query(
+      `INSERT INTO projects (project_id, customer_id, name, ingest_key_hash)
+       VALUES ($1, $2, $3, $4)
+       RETURNING project_id AS id, name, created_at AS "createdAt"`,
+      [projectId, req.customerId, name, keyHash]
+    );
+    res.status(201).json({ project: result.rows[0], ingestKey: key });
+  } catch (err) {
+    logger.error({ err }, '[order-service] Failed to create customer project');
+    res.status(500).json({ error: 'Unable to create project' });
+  }
+});
+
+app.get('/projects/:projectId/access', requireGatewayCustomer, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT project_id AS id
+       FROM projects
+       WHERE project_id = $1 AND customer_id = $2 AND active = TRUE`,
+      [req.params.projectId, req.customerId]
+    );
+    if (!result.rowCount) return res.status(404).json({ error: 'Project not found' });
+    res.json({ project: result.rows[0] });
+  } catch (err) {
+    logger.error({ err }, '[order-service] Failed to authorize project access');
+    res.status(500).json({ error: 'Unable to verify project access' });
+  }
+});
+
+app.post('/projects/:projectId/rotate-key', requireGatewayCustomer, async (req, res) => {
+  const { key, keyHash } = newIngestKey();
+  try {
+    const result = await pool.query(
+      `UPDATE projects
+       SET ingest_key_hash = $1
+       WHERE project_id = $2 AND customer_id = $3 AND active = TRUE
+       RETURNING project_id AS id, name, created_at AS "createdAt"`,
+      [keyHash, req.params.projectId, req.customerId]
+    );
+    if (!result.rowCount) return res.status(404).json({ error: 'Project not found' });
+    res.json({ project: result.rows[0], ingestKey: key });
+  } catch (err) {
+    logger.error({ err }, '[order-service] Failed to rotate project ingest key');
+    res.status(500).json({ error: 'Unable to rotate project key' });
+  }
+});
+
 app.get('/catalog', async (req, res) => {
   try {
     const result = await pool.query(
@@ -144,6 +238,9 @@ app.post('/process', async (req, res) => {
   const { span } = req;
   const idempotencyKey = req.headers['idempotency-key'];
   const userId = req.headers['x-customer-id'];
+  if (!verifyGatewayIdentity(userId, req.headers['x-customer-timestamp'], req.headers['x-customer-signature'])) {
+    return res.status(401).json({ error: 'Verified customer identity is required' });
+  }
   const requestedItems = req.body?.items;
 
   if (!userId) {
@@ -397,4 +494,17 @@ async function verifyPassword(password, encodedHash) {
 
 function makeDummyPasswordHash() {
   return `scrypt$${PASSWORD_SCRYPT_N}$${PASSWORD_SCRYPT_R}$${PASSWORD_SCRYPT_P}$${Buffer.alloc(16).toString('base64url')}$${Buffer.alloc(PASSWORD_HASH_BYTES).toString('base64url')}`;
+}
+
+function verifyGatewayIdentity(customerId, timestamp, signature) {
+  if (typeof customerId !== 'string' || !customerId ||
+      typeof timestamp !== 'string' || !/^\d{10}$/.test(timestamp) ||
+      typeof signature !== 'string' || !/^[a-f\d]{64}$/i.test(signature)) return false;
+  const timestampSeconds = Number(timestamp);
+  if (Math.abs(Math.floor(Date.now() / 1000) - timestampSeconds) > 60) return false;
+  const expected = crypto
+    .createHmac('sha256', process.env.CUSTOMER_IDENTITY_SECRET || 'local-development-customer-identity-secret')
+    .update(`${customerId}.${timestamp}`)
+    .digest();
+  return crypto.timingSafeEqual(Buffer.from(signature, 'hex'), expected);
 }

@@ -5,3 +5,10 @@ node_modules
 dashboard/node_modules
 packages/*/node_modules
 services/*/node_modules
+# Exclude test files from production image
+**/*.test.js
+**/__tests__
+# Exclude dev tooling configs
+*.config.js
+.eslintrc*
+jest.config*

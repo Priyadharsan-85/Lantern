@@ -4,23 +4,13 @@ WORKDIR /app
 
 RUN apk upgrade --no-cache && apk add --no-cache curl
 
-# Copy SDK
-COPY packages/sdk ./packages/sdk
-RUN cd packages/sdk && npm ci --omit=dev && cd ../..
+COPY . .
 
-# Copy collector
-COPY packages/collector ./packages/collector
-RUN cd packages/collector && npm ci --omit=dev && cd ../..
+RUN npm ci --omit=dev && rm -rf /usr/local/lib/node_modules/npm
 
-# Copy services
-COPY services ./services
-RUN cd services/api-gateway && npm ci --omit=dev && cd ../.. && \
-    cd services/order-service && npm ci --omit=dev && cd ../.. && \
-    cd services/payment-service && npm ci --omit=dev && cd ../..
+ENV NODE_ENV=production
+ENV SERVICE=collector
 
-RUN rm -rf /usr/local/lib/node_modules/npm
-
-# Expose ports
 EXPOSE 4000 3000 4001 4002
 
-CMD ["node", "packages/collector/index.js"]
+CMD ["sh", "-c", "if [ \"$SERVICE\" = \"api-gateway\" ]; then node services/api-gateway/index.js; elif [ \"$SERVICE\" = \"order-service\" ]; then node services/order-service/index.js; elif [ \"$SERVICE\" = \"payment-service\" ]; then node services/payment-service/index.js; else node packages/collector/index.js; fi"]
