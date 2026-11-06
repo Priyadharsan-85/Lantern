@@ -37,6 +37,7 @@ Required production values include:
 - DASHBOARD_AUTH_USER
 - DASHBOARD_AUTH_PASSWORD
 - SESSION_SECRET
+- CUSTOMER_IDENTITY_SECRET
 - GRAFANA_ADMIN_USER
 - GRAFANA_ADMIN_PASSWORD
 - ALERT_EMAIL
@@ -44,7 +45,7 @@ Required production values include:
 - SMTP_SMARTHOST
 - SMTP_FROM
 - SMTP_PASSWORD
-- PAYMENT_PROVIDER=disabled
+- `PAYMENT_PROVIDER=disabled` (payments are optional and disabled in production)
 
 For real deployments, use a secret manager such as:
 
@@ -97,15 +98,19 @@ payments.
 
 Caddy automatically obtains HTTPS certificates from Let’s Encrypt using the configured `TLS_EMAIL` and domains.
 
-Production payments are deliberately disabled: the payment service returns `503`
-for charge requests and does not accept Stripe webhooks. Do not add Stripe keys
-or enable payments in `.env.production`. Local sandbox checkout is for development
-only. Customer accounts use salted scrypt password hashes and signed, HttpOnly
-sessions; active products are served from the PostgreSQL catalog with prices stored
-as integer minor units in INR. The order flow now uses the authenticated customer
-session and computes totals from active catalog rows, but live Stripe enablement
-still needs production webhook routing, live-mode configuration, and account
-security/operational review.
+Payments are optional for Lantern's tracing purpose and are disabled in production
+by default. The production payment service returns `503` for charge requests and
+does not accept payment webhooks; no payment-provider account or credentials are
+needed to deploy Lantern for tracing. Local Stripe sandbox checkout remains
+available for development only. Customer accounts use salted scrypt password
+hashes and revocable, HttpOnly sessions; active products are served from the
+PostgreSQL catalog with prices stored as INR paise. The order flow computes totals
+from active catalog rows, but the storefront checkout is not available in
+production while payments are disabled.
+
+Trace data is isolated by account-owned projects and per-project ingest keys;
+see [the multi-tenancy guide](MULTI_TENANCY.md) for setup, key handling, and
+remaining account-security gaps.
 
 To add a product, insert it through a controlled database/admin workflow. For
 example, `price_minor` is in paise (129900 is ₹1,299.00); new products default to
@@ -139,6 +144,14 @@ of `{ "productId": "...", "quantity": 1 }` entries and an `Idempotency-Key`
 header. The server resolves active products, snapshots their names/prices, and
 computes the INR total; client-supplied user IDs and amounts are ignored. Order
 creation will fail until at least one active catalog product has been configured.
+
+Customer sessions are stored in Redis so logout revokes sessions immediately;
+Redis also enforces shared login, registration, and order rate limits across
+gateway replicas. Production state-changing requests must have the exact
+configured `DASHBOARD_ORIGIN`. The gateway signs customer identity claims for
+the internal order service using a separate random `CUSTOMER_IDENTITY_SECRET`
+(at least 32 characters). Configure it in the secret manager and never reuse
+`SESSION_SECRET`.
 
 ## 4. Private networking
 
@@ -287,8 +300,7 @@ Before public release, verify:
 - `NODE_ENV=production`
 - `CORS_ORIGIN` is a specific domain, not `*`
 - `COLLECTOR_API_KEY` is strong and unique
-- `PAYMENT_PROVIDER=disabled`; production charge requests are rejected
-- Stripe keys and webhook secrets are not configured in production
+- `PAYMENT_PROVIDER=disabled`; no payment keys are required or configured
 - no DB/Redis ports are published to the internet
 - TLS certificates are valid and renewed automatically
 - monitoring and alerts are active
@@ -305,4 +317,4 @@ For a cloud deployment, use a managed service such as:
 - a managed PostgreSQL service with private networking
 - a managed Redis service with private networking
 
-This repo is production-oriented, but real Stripe payment processing still requires completing the provider call and webhook/reconciliation flow before accepting real payments.
+Lantern can be deployed as a tracing application without payment processing.
