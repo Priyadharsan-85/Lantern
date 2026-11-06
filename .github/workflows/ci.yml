@@ -51,6 +51,7 @@ jobs:
 
       - name: Run package tests
         run: |
+          npm test --prefix packages/sdk
           npm test --prefix packages/collector
           npm test --prefix services/api-gateway
           npm test --prefix services/order-service
@@ -71,6 +72,9 @@ jobs:
 
       - name: Prepare production environment file
         run: cp .env.production.example .env.production
+
+      - name: Validate production environment
+        run: bash ./scripts/validate-prod-env.sh .env.production
 
       - name: Pull production base images
         run: docker compose --project-name lantern-smoke --env-file .env.production -f docker-compose.prod.yml pull --policy always --ignore-buildable
