@@ -17,10 +17,17 @@ if (!['disabled', 'simulated', 'stripe'].includes(paymentProvider)) {
   throw new Error('[payment-service] PAYMENT_PROVIDER must be "disabled", "stripe", or "simulated"');
 }
 if (isProd && paymentProvider !== 'disabled') {
-  throw new Error('[payment-service] production payments remain disabled until live Stripe configuration, webhook routing, and security controls are explicitly enabled');
+  throw new Error('[payment-service] production payments are disabled; use PAYMENT_PROVIDER=disabled');
 }
-if (paymentProvider === 'stripe' && !/^sk_test_/.test(process.env.STRIPE_SECRET_KEY || '')) {
-  throw new Error('[payment-service] only Stripe sandbox keys are supported until server-side product pricing and user identity are implemented');
+if (paymentProvider === 'stripe' && !process.env.STRIPE_SECRET_KEY) {
+  throw new Error('[payment-service] STRIPE_SECRET_KEY is required when Stripe is enabled');
+}
+if (paymentProvider === 'stripe' && !process.env.STRIPE_WEBHOOK_SECRET) {
+  throw new Error('[payment-service] STRIPE_WEBHOOK_SECRET is required when Stripe is enabled');
+}
+if (!isProd && paymentProvider === 'stripe' &&
+    !/^sk_test_/.test(process.env.STRIPE_SECRET_KEY || '')) {
+  throw new Error('[payment-service] local Stripe mode only supports sandbox keys (sk_test_)');
 }
 
 const logger = pino(

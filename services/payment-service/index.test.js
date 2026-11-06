@@ -95,11 +95,12 @@ describe('Stripe webhook endpoint', () => {
 });
 
 describe('production payment disablement', () => {
-  const originalEnv = {
-    NODE_ENV: process.env.NODE_ENV,
-    PAYMENT_PROVIDER: process.env.PAYMENT_PROVIDER,
-    COLLECTOR_API_KEY: process.env.COLLECTOR_API_KEY,
-  };
+  const envKeys = [
+    'NODE_ENV',
+    'PAYMENT_PROVIDER',
+    'COLLECTOR_API_KEY',
+  ];
+  const originalEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
 
   beforeEach(() => {
     process.env.NODE_ENV = 'production';
@@ -113,6 +114,23 @@ describe('production payment disablement', () => {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
+  });
+
+  it('allows production startup without payment credentials', () => {
+    let productionApp;
+    expect(() => {
+      jest.isolateModules(() => {
+        productionApp = require('./index');
+      });
+    }).not.toThrow();
+    expect(productionApp).toBeTruthy();
+  });
+
+  it('rejects enabling payments in production', () => {
+    process.env.PAYMENT_PROVIDER = 'stripe';
+    expect(() => {
+      jest.isolateModules(() => require('./index'));
+    }).toThrow('production payments are disabled');
   });
 
   it('rejects charges and webhooks without touching the database', async () => {
@@ -133,12 +151,5 @@ describe('production payment disablement', () => {
     expect(webhook.status).toBe(404);
     expect(mockPool.query).not.toHaveBeenCalled();
     expect(mockPool.connect).not.toHaveBeenCalled();
-  });
-
-  it('refuses to start in production if payments are enabled', () => {
-    process.env.PAYMENT_PROVIDER = 'stripe';
-    expect(() => {
-      jest.isolateModules(() => require('./index'));
-    }).toThrow('production payments remain disabled');
   });
 });

@@ -42,10 +42,10 @@ required_vars=(
   DASHBOARD_AUTH_USER
   DASHBOARD_AUTH_PASSWORD
   SESSION_SECRET
+  CUSTOMER_IDENTITY_SECRET
   SPANS_RATE_LIMIT_MAX
   SPANS_RATE_LIMIT_WINDOW_MS
   PAYMENT_FAILURE_RATE
-  PAYMENT_PROVIDER
   VITE_COLLECTOR_URL
   GRAFANA_ADMIN_USER
   GRAFANA_ADMIN_PASSWORD
@@ -87,13 +87,23 @@ for var in SPAN_STREAM_MAX_LENGTH SPAN_PENDING_IDLE_MS; do
   fi
 done
 
-if [ "$PAYMENT_PROVIDER" != "disabled" ]; then
-  echo "PAYMENT_PROVIDER must be disabled in production; only local Stripe sandbox payments are supported." >&2
+if [ "${PAYMENT_PROVIDER:-disabled}" != "disabled" ]; then
+  echo "PAYMENT_PROVIDER must be disabled for production." >&2
+  exit 1
+fi
+
+if [ "$PAYMENT_FAILURE_RATE" != "0" ]; then
+  echo "PAYMENT_FAILURE_RATE must be 0 in production." >&2
   exit 1
 fi
 
 if [ "${#SESSION_SECRET}" -lt 32 ]; then
   echo "SESSION_SECRET must be at least 32 characters." >&2
+  exit 1
+fi
+
+if [ "${#CUSTOMER_IDENTITY_SECRET}" -lt 32 ]; then
+  echo "CUSTOMER_IDENTITY_SECRET must be at least 32 characters." >&2
   exit 1
 fi
 
