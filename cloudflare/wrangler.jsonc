@@ -14,7 +14,7 @@
     {
       "binding": "DB",
       "database_name": "lantern-tracing",
-      "database_id": "replace-with-created-d1-database-id",
+      "database_id": "ec98de1a-22b9-4ea2-be1b-c5e2f38c3f7d",
       "migrations_dir": "migrations"
     }
   ],
