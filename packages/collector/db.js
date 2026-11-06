@@ -35,7 +35,7 @@ async function insertSpan(span) {
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
     ON CONFLICT (project_id, span_id) DO NOTHING
   `;
-  await query(sql, [
+  const result = await query(sql, [
     span.projectId || 'prj_internal',
     span.spanId,
     span.traceId,
@@ -49,6 +49,7 @@ async function insertSpan(span) {
     JSON.stringify(span.tags || {}),
     JSON.stringify(span.logs || []),
   ]);
+  return result.rowCount > 0;
 }
 
 async function getProjectIdForIngestKey(keyHash) {

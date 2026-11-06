@@ -1,5 +1,5 @@
 const { readSpans, ackSpans }   = require('./queue');
-const { insertSpan }            = require('./db');
+const { insertSpan, releaseProjectSpanQuota } = require('./db');
 const { CircuitBreaker }        = require('./error');
 const logger                    = require('./logger');
 
@@ -35,7 +35,12 @@ async function processMessages(messages) {
   let processed = 0;
   for (const { streamId, span } of messages) {
     try {
-      await dbBreaker.execute(() => insertSpan(span));
+      const inserted = await dbBreaker.execute(() => insertSpan(span));
+      if (!inserted && span.projectId && span.projectId !== 'prj_internal') {
+        // The span already existed, so the quota reserved at ingest must be
+        // returned. Leaving the message unacknowledged on failure retries it.
+        await releaseProjectSpanQuota(span.projectId, 1);
+      }
       await ackSpans([streamId]);
       processed += 1;
     } catch (err) {

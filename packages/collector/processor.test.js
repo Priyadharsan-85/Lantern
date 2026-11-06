@@ -1,6 +1,7 @@
 const mockReadSpans = jest.fn();
 const mockAckSpans = jest.fn();
 const mockInsertSpan = jest.fn();
+const mockReleaseProjectSpanQuota = jest.fn();
 const mockSpansIngestedInc = jest.fn();
 const mockProcessorLatencyObserve = jest.fn();
 
@@ -17,6 +18,7 @@ jest.mock('./queue', () => ({
 }));
 jest.mock('./db', () => ({
   insertSpan: (...args) => mockInsertSpan(...args),
+  releaseProjectSpanQuota: (...args) => mockReleaseProjectSpanQuota(...args),
 }));
 
 const { processMessages } = require('./processor');
@@ -24,8 +26,9 @@ const { processMessages } = require('./processor');
 describe('span processor delivery guarantees', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockInsertSpan.mockResolvedValue();
+    mockInsertSpan.mockResolvedValue(true);
     mockAckSpans.mockResolvedValue();
+    mockReleaseProjectSpanQuota.mockResolvedValue();
   });
 
   it('records batch latency and the number of persisted spans', async () => {
@@ -64,5 +67,40 @@ describe('span processor delivery guarantees', () => {
     expect(mockInsertSpan).toHaveBeenCalledTimes(2);
     expect(mockAckSpans).toHaveBeenNthCalledWith(1, ['3-0']);
     expect(mockAckSpans).toHaveBeenNthCalledWith(2, ['3-0']);
+  });
+
+  it('releases reserved quota when a project span already exists', async () => {
+    mockInsertSpan.mockResolvedValueOnce(false);
+
+    const processed = await processMessages([
+      { streamId: '4-0', span: { spanId: 'duplicate-span', projectId: 'prj_customer' } },
+    ]);
+
+    expect(processed).toBe(1);
+    expect(mockReleaseProjectSpanQuota).toHaveBeenCalledWith('prj_customer', 1);
+    expect(mockAckSpans).toHaveBeenCalledWith(['4-0']);
+  });
+
+  it('does not release quota for internal project spans', async () => {
+    mockInsertSpan.mockResolvedValueOnce(false);
+
+    await processMessages([
+      { streamId: '5-0', span: { spanId: 'duplicate-span', projectId: 'prj_internal' } },
+    ]);
+
+    expect(mockReleaseProjectSpanQuota).not.toHaveBeenCalled();
+    expect(mockAckSpans).toHaveBeenCalledWith(['5-0']);
+  });
+
+  it('leaves a duplicate unacknowledged when the quota release fails', async () => {
+    mockInsertSpan.mockResolvedValueOnce(false);
+    mockReleaseProjectSpanQuota.mockRejectedValueOnce(new Error('database unavailable'));
+
+    const processed = await processMessages([
+      { streamId: '6-0', span: { spanId: 'duplicate-span', projectId: 'prj_customer' } },
+    ]);
+
+    expect(processed).toBe(0);
+    expect(mockAckSpans).not.toHaveBeenCalled();
   });
 });

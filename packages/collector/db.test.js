@@ -41,6 +41,26 @@ describe('tenant-scoped trace persistence', () => {
     );
   });
 
+  it('reports whether a span row was inserted so duplicates can release quota', async () => {
+    const span = {
+      projectId: 'prj_alpha',
+      spanId: 'span_1',
+      traceId: 'trace_1',
+      name: 'GET /',
+      serviceName: 'api',
+      status: 'ok',
+      duration: 1,
+      startTime: 10,
+      endTime: 11,
+    };
+
+    mockClient.query.mockResolvedValueOnce({ rows: [], rowCount: 1 });
+    await expect(insertSpan(span)).resolves.toBe(true);
+
+    mockClient.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    await expect(insertSpan(span)).resolves.toBe(false);
+  });
+
   it('assigns pre-migration queued spans only to the internal tenant', async () => {
     await insertSpan({ spanId: 'legacy', traceId: 'legacy-trace' });
     expect(mockClient.query.mock.calls[0][1][0]).toBe('prj_internal');
