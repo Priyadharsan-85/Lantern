@@ -518,7 +518,7 @@ function AppContent() {
             <p className="empty-state__title">No traces match this view</p>
             <p className="empty-state__sub">
               {traces.length === 0
-                ? 'Run node test-trace.js to send your first request through the pipeline.'
+                ? 'Run the example backend in examples/node-backend (see its README) to send your first trace.'
                 : 'Try a different search term or clear the status filter.'}
             </p>
             {traces.length === 0 && (
