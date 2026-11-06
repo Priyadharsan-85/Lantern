@@ -65,8 +65,19 @@ password recovery are deliberately disabled.
 
 The current deployment is available at
 https://lantern-tracing.gpriyadharsan789.workers.dev. Its dashboard and health
-endpoint respond over HTTPS; complete a sign-in and trace-ingestion smoke test
-before relying on the hosted tracing flow.
+endpoint respond over HTTPS. Verify sign-in and trace ingestion with the hosted
+smoke test from the repository root:
+
+```powershell
+$env:LANTERN_BASE_URL = "https://lantern-tracing.gpriyadharsan789.workers.dev"
+$env:LANTERN_ADMIN_EMAIL = "you@example.com"
+$env:LANTERN_ADMIN_PASSWORD = "<worker admin password>"
+node .\scripts\smoke-test-cloudflare.mjs
+```
+
+The script reuses or creates a `hosted-smoke-test` project, rotates only that
+project's ingest key, posts one span, and reads it back through the
+authenticated APIs. Credentials and keys are never printed.
 
 To redeploy or reproduce this setup in another Cloudflare account, set that
 account's D1 database ID in `wrangler.jsonc`, apply migrations remotely, and

@@ -7,9 +7,9 @@ a separate Cloudflare Workers + D1 tracing MVP.
 
 > **Deployment status:** the private Cloudflare version is deployed at
 > [lantern-tracing.gpriyadharsan789.workers.dev](https://lantern-tracing.gpriyadharsan789.workers.dev).
-> The dashboard and health endpoint have been checked over HTTPS; an end-to-end
-> sign-in and trace-ingestion smoke test is still pending. The original Docker
-> Compose deployment and database are untouched and remain the fallback.
+> The dashboard and health endpoint have been checked over HTTPS. Run the
+> hosted smoke test below to verify sign-in and trace ingestion. The original
+> Docker Compose deployment and database are untouched and remain the fallback.
 
 ## What it demonstrates
 
@@ -104,6 +104,23 @@ Requirements: Node.js 22+, npm, and PowerShell on Windows.
    ```
 
    Return to the dashboard and refresh traces.
+
+## Run the hosted Cloudflare smoke test
+
+Use the Worker URL and the provisioned admin credentials (never commit or share
+them):
+
+```powershell
+$env:LANTERN_BASE_URL = "https://lantern-tracing.gpriyadharsan789.workers.dev"
+$env:LANTERN_ADMIN_EMAIL = "you@example.com"
+$env:LANTERN_ADMIN_PASSWORD = "<worker admin password>"
+node .\scripts\smoke-test-cloudflare.mjs
+```
+
+The script signs in, reuses or creates a `hosted-smoke-test` project, rotates
+only that project's ingest key, posts one span, and reads the trace back through
+both the trace detail and trace list APIs. It never prints the password or
+ingest key. To use a different project name, set `LANTERN_SMOKE_PROJECT`.
 
 ## Tests and checks
 
