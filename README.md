@@ -5,11 +5,11 @@ collector, and a React dashboard helps inspect traces, service calls, timing,
 and errors. The repository includes the original Docker Compose application and
 a separate Cloudflare Workers + D1 tracing MVP.
 
-> **Deployment status:** the Cloudflare version is implemented and tested
-> locally, but it has not been deployed to a Cloudflare account. The original
-> Docker Compose deployment and database are untouched and remain the fallback.
-> Do not describe the Cloudflare version as publicly hosted until you complete
-> the deployment steps.
+> **Deployment status:** the private Cloudflare version is deployed at
+> [lantern-tracing.gpriyadharsan789.workers.dev](https://lantern-tracing.gpriyadharsan789.workers.dev).
+> The dashboard and health endpoint have been checked over HTTPS; an end-to-end
+> sign-in and trace-ingestion smoke test is still pending. The original Docker
+> Compose deployment and database are untouched and remain the fallback.
 
 ## What it demonstrates
 
@@ -122,12 +122,14 @@ idempotent ingestion, quotas, retention, validation, and login throttling.
 
 ## Cloudflare deployment
 
-Deployment is a separate manual step and requires a Cloudflare account. The free
-plan has quotas and no production uptime guarantee; account signup or verification
-requirements can vary. Check current Cloudflare requirements before relying on
-the app for real users or data.
+The private tracing MVP is deployed at
+https://lantern-tracing.gpriyadharsan789.workers.dev. The free plan has quotas
+and no production uptime guarantee; account signup or verification requirements
+can vary. Check current Cloudflare requirements before relying on the app for
+real users or data.
 
-The Worker config uses a placeholder D1 ID until you create a database. From
+To reproduce the deployment in another Cloudflare account, create a D1 database
+and configure the account-specific ID in `cloudflare\wrangler.jsonc`. From
 PowerShell:
 
 1. Create the D1 database with `npm run db:create --prefix cloudflare`, then put
@@ -154,6 +156,8 @@ PowerShell:
 
 5. Sign in using the admin secret and create a project. Keep each project ingest
    key in the instrumented server's secret environment, never in browser code.
+   Preview URLs are disabled; only the production workers.dev URL is intended
+   to be publicly available.
 
 Cloudflare data starts empty; the local PostgreSQL accounts, projects, and spans
 are not migrated. Storefront/orders/payments, self-service accounts, and email

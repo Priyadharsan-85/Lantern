@@ -34,8 +34,9 @@ screenshots or recordings.
   queries, rate limits, key rotation, and retention; integrated dashboard and
   Worker checks into GitHub Actions.
 
-Keep the Cloudflare feature described as a **local-tested MVP** until it has
-actually been deployed and verified from an external network.
+The Cloudflare MVP is deployed, and its dashboard and health endpoint have been
+verified over HTTPS. Complete an end-to-end sign-in and trace-ingestion smoke
+test before claiming the hosted tracing flow has been verified.
 
 ## Interview topics to prepare
 

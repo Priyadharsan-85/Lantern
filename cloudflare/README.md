@@ -61,14 +61,18 @@ password recovery are deliberately disabled.
    Instrumented Node services should set `SDK_MAX_BATCH_SIZE=100` to keep
    requests within this Worker’s batch limit.
 
-## Deployment (not performed by this change)
+## Deployment
 
-After creating a Cloudflare account and D1 database, set the real D1 database ID
-in `wrangler.jsonc`, apply migrations remotely, and store `ADMIN_EMAIL` and
-`ADMIN_PASSWORD` as Worker secrets. Build the dashboard with
-`VITE_PRIVATE_MVP=true`, then deploy with Wrangler. Keep credentials out of the
-repository and chat. Do not deploy until the dashboard bundle and local D1 flow
-have been tested.
+The current deployment is available at
+https://lantern-tracing.gpriyadharsan789.workers.dev. Its dashboard and health
+endpoint respond over HTTPS; complete a sign-in and trace-ingestion smoke test
+before relying on the hosted tracing flow.
+
+To redeploy or reproduce this setup in another Cloudflare account, set that
+account's D1 database ID in `wrangler.jsonc`, apply migrations remotely, and
+store `ADMIN_EMAIL` and `ADMIN_PASSWORD` as Worker secrets. Build the dashboard
+with `VITE_PRIVATE_MVP=true`, then deploy with Wrangler. Keep credentials out of
+the repository and chat.
 
 The current local PostgreSQL accounts, projects, and traces are not imported.
 This Worker starts with a separate empty D1 database; the existing Docker
