@@ -20,3 +20,23 @@ groups:
         annotations:
           summary: Span ingestion is failing
           description: Span batches have failed to enter the Redis queue during the last 5 minutes.
+
+      - alert: HighCollectorLatency
+        expr: histogram_quantile(0.95, sum(rate(lantern_processor_latency_ms_bucket[5m])) by (le)) > 1000
+        for: 5m
+        labels:
+          service: collector
+          severity: warning
+        annotations:
+          summary: High collector latency
+          description: The 95th percentile collector span processing latency exceeds 1 second for 5 minutes.
+
+      - alert: SpanProcessingFailures
+        expr: increase(lantern_spans_ingested_total{status="processor_error"}[5m]) > 0
+        for: 5m
+        labels:
+          service: collector
+          severity: warning
+        annotations:
+          summary: Span processing is failing
+          description: The collector failed to persist spans during the last 5 minutes; messages remain pending for retry.

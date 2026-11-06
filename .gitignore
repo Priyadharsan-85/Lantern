@@ -17,4 +17,3 @@ service-account*.json
 
 *.log
 backups/
-monitoring/alerts/
