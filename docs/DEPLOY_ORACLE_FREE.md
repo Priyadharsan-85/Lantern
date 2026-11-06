@@ -100,9 +100,8 @@ openssl rand -hex 32
 ```
 
 Use a separate value for each of `PGPASSWORD`, `COLLECTOR_API_KEY`,
-`DASHBOARD_AUTH_PASSWORD`, `SESSION_SECRET`, `CUSTOMER_IDENTITY_SECRET`, and
-`GRAFANA_ADMIN_PASSWORD`. Leave `PAYMENT_PROVIDER=disabled` and
-`PAYMENT_FAILURE_RATE=0`.
+`SESSION_SECRET`, `CUSTOMER_IDENTITY_SECRET`, and `GRAFANA_ADMIN_PASSWORD`.
+Leave `PAYMENT_PROVIDER=disabled` and `PAYMENT_FAILURE_RATE=0`.
 
 Validate the completed environment before deployment:
 

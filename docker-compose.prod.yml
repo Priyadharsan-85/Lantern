@@ -112,8 +112,6 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       DASHBOARD_ORIGIN: ${DASHBOARD_ORIGIN:?Set DASHBOARD_ORIGIN in .env.production}
-      DASHBOARD_AUTH_USER: ${DASHBOARD_AUTH_USER:?Set DASHBOARD_AUTH_USER in .env.production}
-      DASHBOARD_AUTH_PASSWORD: ${DASHBOARD_AUTH_PASSWORD:?Set DASHBOARD_AUTH_PASSWORD in .env.production}
       SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env.production}
     networks:
       - lantern

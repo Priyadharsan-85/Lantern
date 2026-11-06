@@ -45,22 +45,6 @@ async function apiFetch(path, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
     }
 }
 
-export async function login(username, password) {
-    return apiFetch('/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
-    });
-}
-
-export async function logout() {
-    return apiFetch('/auth/logout', { method: 'POST' });
-}
-
-export async function checkSession() {
-    return apiFetch('/auth/me');
-}
-
 export async function registerCustomer(email, password) {
     return apiFetch('/auth/customer/register', {
         method: 'POST',

@@ -39,8 +39,6 @@ required_vars=(
   COLLECTOR_API_KEY
   CORS_ORIGIN
   DASHBOARD_ORIGIN
-  DASHBOARD_AUTH_USER
-  DASHBOARD_AUTH_PASSWORD
   SESSION_SECRET
   CUSTOMER_IDENTITY_SECRET
   SPANS_RATE_LIMIT_MAX
@@ -104,11 +102,6 @@ fi
 
 if [ "${#CUSTOMER_IDENTITY_SECRET}" -lt 32 ]; then
   echo "CUSTOMER_IDENTITY_SECRET must be at least 32 characters." >&2
-  exit 1
-fi
-
-if [ "${#DASHBOARD_AUTH_PASSWORD}" -lt 12 ]; then
-  echo "DASHBOARD_AUTH_PASSWORD must be at least 12 characters." >&2
   exit 1
 fi
 

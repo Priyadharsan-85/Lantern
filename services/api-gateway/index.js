@@ -13,9 +13,8 @@ const isProd = process.env.NODE_ENV === 'production';
 if (isProd && !process.env.COLLECTOR_API_KEY) {
   throw new Error('[api-gateway] COLLECTOR_API_KEY is required in production');
 }
-if (isProd && (!process.env.DASHBOARD_AUTH_USER ||
-  !process.env.DASHBOARD_AUTH_PASSWORD || !process.env.SESSION_SECRET)) {
-  throw new Error('[api-gateway] DASHBOARD_AUTH_USER, DASHBOARD_AUTH_PASSWORD, and SESSION_SECRET are required in production');
+if (isProd && !process.env.SESSION_SECRET) {
+  throw new Error('[api-gateway] SESSION_SECRET is required in production');
 }
 if (isProd && (!process.env.CUSTOMER_IDENTITY_SECRET ||
     Buffer.byteLength(process.env.CUSTOMER_IDENTITY_SECRET, 'utf8') < 32)) {
@@ -55,7 +54,6 @@ app.use((req, res, next) => {
   next();
 });
 
-const SESSION_COOKIE = 'lantern_session';
 const CUSTOMER_SESSION_COOKIE = 'lantern_customer_session';
 const SESSION_TTL_SECONDS = 8 * 60 * 60;
 
@@ -79,24 +77,6 @@ function readCookies(header = '') {
   }));
 }
 
-function verifySession(value) {
-  if (!value) return false;
-  const [encoded, signature] = value.split('.');
-  if (!encoded || !signature) return false;
-  const expected = crypto.createHmac('sha256', process.env.SESSION_SECRET || 'development-only-secret')
-    .update(encoded)
-    .digest('base64url');
-  if (signature.length !== expected.length ||
-      !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return false;
-  try {
-    const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString());
-    return payload.exp > Math.floor(Date.now() / 1000) &&
-      payload.user === process.env.DASHBOARD_AUTH_USER;
-  } catch {
-    return false;
-  }
-}
-
 function readSignedSession(value) {
   if (!value) return null;
   const [encoded, signature] = value.split('.');
@@ -112,18 +92,6 @@ function readSignedSession(value) {
   } catch {
     return null;
   }
-}
-
-function setSessionCookie(res, value, maxAge = SESSION_TTL_SECONDS) {
-  const flags = [
-    `${SESSION_COOKIE}=${encodeURIComponent(value)}`,
-    `Max-Age=${maxAge}`,
-    'Path=/',
-    'HttpOnly',
-    'SameSite=Lax',
-  ];
-  if (isProd) flags.push('Secure');
-  res.setHeader('Set-Cookie', flags.join('; '));
 }
 
 function setCustomerSessionCookie(res, value, maxAge = SESSION_TTL_SECONDS) {
@@ -194,21 +162,6 @@ function rateLimit({ name, max, windowSeconds, key }) {
   };
 }
 
-function requireDashboardAuth(req, res, next) {
-  if (!isProd) return next();
-  const cookies = readCookies(req.headers.cookie);
-  const session = readSignedSession(cookies[SESSION_COOKIE]);
-  if (!verifySession(cookies[SESSION_COOKIE]) || !session?.sid) {
-    return res.status(401).json({ error: 'Authentication required' });
-  }
-  isSessionActive(session)
-    .then((active) => active ? next() : res.status(401).json({ error: 'Authentication required' }))
-    .catch((err) => {
-      logger.error({ err }, '[api-gateway] Could not validate dashboard session');
-      res.status(503).json({ error: 'Authentication is temporarily unavailable' });
-    });
-}
-
 async function requireCustomerAuth(req, res, next) {
   (async () => {
     const cookies = readCookies(req.headers.cookie);
@@ -225,7 +178,6 @@ async function requireCustomerAuth(req, res, next) {
   });
 }
 
-const dashboardLoginLimit = rateLimit({ name: 'dashboard-login', max: 10, windowSeconds: 900 });
 const customerRegisterLimit = rateLimit({ name: 'customer-register', max: 5, windowSeconds: 900 });
 const customerLoginLimit = rateLimit({ name: 'customer-login', max: 10, windowSeconds: 900 });
 const customerVerifyLimit = rateLimit({ name: 'customer-verify', max: 10, windowSeconds: 900 });
@@ -284,48 +236,6 @@ function forwardServiceError(err, res, message) {
   logger.error({ err }, `[api-gateway] ${message}`);
   return res.status(503).json({ error: message });
 }
-
-app.post('/auth/login', dashboardLoginLimit, async (req, res) => {
-  if (!isProd) return res.json({ authenticated: true });
-  const { username, password } = req.body || {};
-  if (username !== process.env.DASHBOARD_AUTH_USER ||
-      password !== process.env.DASHBOARD_AUTH_PASSWORD) {
-    return res.status(401).json({ error: 'Invalid username or password' });
-  }
-  const exp = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
-  try {
-    setSessionCookie(res, await issueSession({ user: username, exp }));
-  } catch (err) {
-    logger.error({ err }, '[api-gateway] Could not create dashboard session');
-    return res.status(503).json({ error: 'Authentication is temporarily unavailable' });
-  }
-  res.json({ authenticated: true, user: username });
-});
-
-app.post('/auth/logout', async (req, res) => {
-  try {
-    await revokeSession(readCookies(req.headers.cookie)[SESSION_COOKIE]);
-  } catch (err) {
-    logger.error({ err }, '[api-gateway] Could not revoke dashboard session');
-    return res.status(503).json({ error: 'Unable to sign out; try again' });
-  }
-  setSessionCookie(res, '', 0);
-  res.json({ authenticated: false });
-});
-
-app.get('/auth/me', async (req, res) => {
-  if (!isProd) return res.json({ authenticated: true });
-  const cookies = readCookies(req.headers.cookie);
-  const sessionValue = cookies[SESSION_COOKIE];
-  try {
-    const authenticated = verifySession(sessionValue) &&
-      await isSessionActive(readSignedSession(sessionValue));
-    res.status(authenticated ? 200 : 401).json({ authenticated });
-  } catch (err) {
-    logger.error({ err }, '[api-gateway] Could not validate dashboard session');
-    res.status(503).json({ error: 'Authentication is temporarily unavailable' });
-  }
-});
 
 app.post('/auth/customer/register', customerRegisterLimit, async (req, res) => {
   try {

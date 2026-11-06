@@ -366,8 +366,6 @@ describe('API Gateway', () => {
     const originalEnv = {
       NODE_ENV: process.env.NODE_ENV,
       COLLECTOR_API_KEY: process.env.COLLECTOR_API_KEY,
-      DASHBOARD_AUTH_USER: process.env.DASHBOARD_AUTH_USER,
-      DASHBOARD_AUTH_PASSWORD: process.env.DASHBOARD_AUTH_PASSWORD,
       SESSION_SECRET: process.env.SESSION_SECRET,
       CUSTOMER_IDENTITY_SECRET: process.env.CUSTOMER_IDENTITY_SECRET,
       DASHBOARD_ORIGIN: process.env.DASHBOARD_ORIGIN,
@@ -384,8 +382,6 @@ describe('API Gateway', () => {
       Object.assign(process.env, {
         NODE_ENV: 'production',
         COLLECTOR_API_KEY: 'test-collector-key',
-        DASHBOARD_AUTH_USER: 'admin',
-        DASHBOARD_AUTH_PASSWORD: 'test-dashboard-password',
         SESSION_SECRET: 'test-session-secret-that-is-long-enough',
         CUSTOMER_IDENTITY_SECRET: 'test-customer-identity-secret-32-bytes',
         DASHBOARD_ORIGIN: 'https://shop.example.test',
