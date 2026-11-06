@@ -1,6 +1,15 @@
 const mockReadSpans = jest.fn();
 const mockAckSpans = jest.fn();
 const mockInsertSpan = jest.fn();
+const mockSpansIngestedInc = jest.fn();
+const mockProcessorLatencyObserve = jest.fn();
+
+jest.mock('./index', () => ({
+  _metrics: {
+    spansIngested: { inc: (...args) => mockSpansIngestedInc(...args) },
+    processorLatency: { observe: (...args) => mockProcessorLatencyObserve(...args) },
+  },
+}));
 
 jest.mock('./queue', () => ({
   readSpans: (...args) => mockReadSpans(...args),
@@ -17,6 +26,17 @@ describe('span processor delivery guarantees', () => {
     jest.clearAllMocks();
     mockInsertSpan.mockResolvedValue();
     mockAckSpans.mockResolvedValue();
+  });
+
+  it('records batch latency and the number of persisted spans', async () => {
+    const processed = await processMessages([
+      { streamId: '1-0', span: { spanId: 'saved-span' } },
+    ]);
+
+    expect(processed).toBe(1);
+    expect(mockProcessorLatencyObserve).toHaveBeenCalledTimes(1);
+    expect(mockProcessorLatencyObserve).toHaveBeenCalledWith(expect.any(Number));
+    expect(mockSpansIngestedInc).toHaveBeenCalledWith({ status: 'processed' }, 1);
   });
 
   it('leaves failed database writes unacknowledged and processes other spans', async () => {

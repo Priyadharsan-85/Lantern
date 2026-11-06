@@ -1,12 +1,13 @@
 const Redis = require('ioredis');
 const crypto = require('crypto');
 const os = require('os');
+const logger = require('./logger');
 
 const REDIS_HOST = process.env.REDIS_HOST || 'localhost';
 const REDIS_PORT = Number(process.env.REDIS_PORT) || 6379;
 
-const redis    = new Redis({ host: REDIS_HOST, port: REDIS_PORT });
-const consumer = new Redis({ host: REDIS_HOST, port: REDIS_PORT });
+const redis    = new Redis({ host: REDIS_HOST, port: REDIS_PORT, lazyConnect: true });
+const consumer = new Redis({ host: REDIS_HOST, port: REDIS_PORT, lazyConnect: true });
 
 const STREAM_KEY  = 'lantern:spans';
 const GROUP_NAME  = 'span-processors';
@@ -33,36 +34,50 @@ const ACK_AND_DELETE_SCRIPT = `
   local removed = 0
   for i = 2, #ARGV do
     local acknowledged = redis.call('XACK', KEYS[1], ARGV[1], ARGV[i])
-    if acknowledged > 0 then removed = removed + redis.call('XDEL', KEYS[1], ARGV[i]) end
+    if acknowledged > 0 then
+      removed = removed + redis.call('XDEL', KEYS[1], ARGV[i])
+    end
   end
   return removed
 `;
 
 class StreamCapacityError extends Error {
-  constructor() { super('Span queue is full'); this.name = 'StreamCapacityError'; }
+  constructor() {
+    super('Span queue is full');
+    this.name = 'StreamCapacityError';
+  }
 }
 
-// create consumer group once on startup
 async function setupStream() {
   try {
     await redis.xgroup('CREATE', STREAM_KEY, GROUP_NAME, '0', 'MKSTREAM');
-    console.log('[Queue] consumer group created');
+    logger.info('[Queue] consumer group created');
   } catch (err) {
     if (!err.message.includes('BUSYGROUP')) throw err;
   }
 }
 
-// push a batch of spans onto the stream
 async function pushSpans(spans) {
-  const result = await redis.eval(PUSH_SPANS_SCRIPT, 1, STREAM_KEY,
-    String(MAX_STREAM_LENGTH), ...spans.map((span) => JSON.stringify(span)));
+  const result = await redis.eval(
+    PUSH_SPANS_SCRIPT,
+    1,
+    STREAM_KEY,
+    String(MAX_STREAM_LENGTH),
+    ...spans.map((span) => JSON.stringify(span))
+  );
   if (Number(result) < 0) throw new StreamCapacityError();
 }
 
-// read up to `count` unprocessed spans from the stream
 async function readSpans(count = 100) {
-  const claimed = await consumer.xautoclaim(STREAM_KEY, GROUP_NAME, CONSUMER_ID,
-    PENDING_IDLE_MS, reclaimCursor, 'COUNT', count);
+  const claimed = await consumer.xautoclaim(
+    STREAM_KEY,
+    GROUP_NAME,
+    CONSUMER_ID,
+    PENDING_IDLE_MS,
+    reclaimCursor,
+    'COUNT',
+    count
+  );
   reclaimCursor = claimed[0] === '0-0' ? '0-0' : claimed[0];
   const recovered = parseMessages(claimed[1] || []);
   if (recovered.length > 0) return recovered;
@@ -74,21 +89,34 @@ async function readSpans(count = 100) {
     'STREAMS', STREAM_KEY, '>'
   );
   if (!results) return [];
+
   return parseMessages(results[0][1]);
 }
 
-// acknowledge processed spans so Redis removes them
 async function ackSpans(ids) {
   if (ids.length === 0) return;
   await consumer.eval(ACK_AND_DELETE_SCRIPT, 1, STREAM_KEY, GROUP_NAME, ...ids);
 }
 
+async function getStreamLength() {
+  return redis.xlen(STREAM_KEY);
+}
+
 function parseMessages(messages) {
   return messages.map(([id, fields]) => {
     const dataIndex = fields.indexOf('data');
-    if (dataIndex < 0 || !fields[dataIndex + 1]) throw new Error(`Redis stream entry ${id} does not contain span data`);
+    if (dataIndex < 0 || !fields[dataIndex + 1]) {
+      throw new Error(`Redis stream entry ${id} does not contain span data`);
+    }
     return { streamId: id, span: JSON.parse(fields[dataIndex + 1]) };
   });
 }
 
-module.exports = { setupStream, pushSpans, readSpans, ackSpans, StreamCapacityError };
+module.exports = {
+  setupStream,
+  pushSpans,
+  readSpans,
+  ackSpans,
+  getStreamLength,
+  StreamCapacityError,
+};
