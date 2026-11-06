@@ -3,6 +3,8 @@
 .env.*
 !.env.example
 !.env.production.example
+cloudflare/.dev.vars
+cloudflare/.wrangler/
 
 # Local and deployment credentials
 *.pem

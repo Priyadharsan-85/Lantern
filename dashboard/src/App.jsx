@@ -20,6 +20,8 @@ import {
 } from './api';
 import './App.css';
 
+const PRIVATE_MVP = import.meta.env.VITE_PRIVATE_MVP === 'true';
+
 // ── Icons ─────────────────────────────────────────────────────────────────────
 const SearchIcon  = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.35-4.35"></path></svg>;
 const RefreshIcon = () => <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36M20.49 15a9 9 0 0 1-14.85 3.36"></path></svg>;
@@ -81,7 +83,9 @@ function LoginScreen({ onLogin }) {
   const searchParams = new URLSearchParams(window.location.search);
   const verificationToken = searchParams.get('verifyEmail') || '';
   const resetToken = searchParams.get('resetPassword') || '';
-  const [mode, setMode] = useState(verificationToken ? 'verify' : resetToken ? 'reset' : 'login');
+  const [mode, setMode] = useState(PRIVATE_MVP
+    ? 'login'
+    : verificationToken ? 'verify' : resetToken ? 'reset' : 'login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState(null);
@@ -89,7 +93,7 @@ function LoginScreen({ onLogin }) {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!verificationToken) return;
+    if (PRIVATE_MVP || !verificationToken) return;
     let active = true;
     verifyCustomerEmail(verificationToken)
       .then(() => {
@@ -150,6 +154,11 @@ function LoginScreen({ onLogin }) {
     <main className="login-screen">
       <form className="login-card" onSubmit={handleSubmit}>
         <div className="brand-mark" />
+        {PRIVATE_MVP && (
+          <p className="login-notice" role="note">
+            Private preview: sign-in is provisioned by the deployment owner. Self-service account creation and password recovery are disabled.
+          </p>
+        )}
         <h1>
           {mode === 'register' ? 'Create your Lantern account'
             : mode === 'forgot' ? 'Reset your password'
@@ -182,12 +191,12 @@ function LoginScreen({ onLogin }) {
                       : 'Sign in'}
           </button>
         )}
-        {mode === 'login' && (
+        {!PRIVATE_MVP && mode === 'login' && (
           <button className="login-mode-toggle" type="button" onClick={() => { setMode('forgot'); setError(null); setNotice(null); }}>
             Forgot your password?
           </button>
         )}
-        {['login', 'register'].includes(mode) && (
+        {!PRIVATE_MVP && ['login', 'register'].includes(mode) && (
           <button
             className="login-mode-toggle"
             type="button"
@@ -200,7 +209,7 @@ function LoginScreen({ onLogin }) {
             {mode === 'register' ? 'Already have an account? Sign in' : 'New to Lantern? Create an account'}
           </button>
         )}
-        {['forgot', 'resend'].includes(mode) && (
+        {!PRIVATE_MVP && ['forgot', 'resend'].includes(mode) && (
           <button className="login-mode-toggle" type="button" onClick={() => { setMode('login'); setError(null); setNotice(null); }}>
             Back to sign in
           </button>
@@ -286,7 +295,7 @@ function AppContent() {
     if (!authenticated) return undefined;
     if (!selectedProjectId) return undefined;
     const initialFetch = setTimeout(fetchTracesData, 0);
-    const interval = setInterval(fetchTracesData, 5000);
+    const interval = setInterval(fetchTracesData, PRIVATE_MVP ? 30_000 : 5000);
 
     return () => {
       clearTimeout(initialFetch);
@@ -391,7 +400,7 @@ function AppContent() {
         </div>
 
         <div className="topbar__stats">
-          <a className="refresh-btn" href="/shop">Storefront</a>
+          {!PRIVATE_MVP && <a className="refresh-btn" href="/shop">Storefront</a>}
           <Stat label="traces" value={traces.length} />
           <Stat label="errors" value={errorCount} tone={errorCount > 0 ? 'error' : 'default'} />
           <Stat label="avg" value={`${avgDuration}ms`} />
@@ -559,7 +568,17 @@ export default function App() {
   const isStorefront = window.location.pathname.replace(/\/+$/, '') === '/shop';
   return (
     <ErrorBoundary>
-      {isStorefront ? <Shop /> : <AppContent />}
+      {isStorefront && PRIVATE_MVP
+        ? (
+          <main className="login-screen">
+            <div className="login-card">
+              <h1>Storefront is not part of this private preview</h1>
+              <p>Orders and payments remain available in the existing Docker application.</p>
+              <a href="/">Return to traces</a>
+            </div>
+          </main>
+        )
+        : isStorefront ? <Shop /> : <AppContent />}
     </ErrorBoundary>
   );
 }

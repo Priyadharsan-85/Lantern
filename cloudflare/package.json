@@ -1,0 +1,17 @@
+{
+  "name": "lantern-cloudflare",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:create": "wrangler d1 create lantern-tracing",
+    "db:migrate:local": "wrangler d1 migrations apply lantern-tracing --local",
+    "db:migrate:remote": "wrangler d1 migrations apply lantern-tracing --remote",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "miniflare": "^3.20250718.3",
+    "wrangler": "^4.34.0"
+  }
+}

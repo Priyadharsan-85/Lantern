@@ -186,5 +186,28 @@ describe('Tracer', () => {
       expect(axios.post).not.toHaveBeenCalled();
       t.shutdown();
     });
+
+    it('sends large queues in configured batches', async () => {
+      process.env.SDK_MAX_BATCH_SIZE = '2';
+      axios.post.mockResolvedValue({ data: { received: 2 } });
+      const t = new Tracer({ serviceName: 'svc', collectorUrl: 'http://collector' });
+      for (const name of ['first', 'second', 'third']) {
+        const span = t.startSpan(name);
+        span.finish();
+        t._enqueue(span);
+      }
+
+      await t.flush();
+
+      expect(axios.post.mock.calls[0][1].spans).toHaveLength(2);
+      expect(t._queue).toHaveLength(1);
+
+      await t.flush();
+
+      expect(axios.post.mock.calls[1][1].spans).toHaveLength(1);
+      expect(t._queue).toHaveLength(0);
+      delete process.env.SDK_MAX_BATCH_SIZE;
+      t.shutdown();
+    });
   });
 });

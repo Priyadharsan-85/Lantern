@@ -44,12 +44,30 @@ jobs:
           npm install --no-save --no-package-lock --no-audit --no-fund --prefix services/order-service
           npm install --no-save --no-package-lock --no-audit --no-fund --prefix services/payment-service
 
+      - name: Install Cloudflare and dashboard dependencies
+        run: |
+          npm ci --prefix cloudflare
+          npm ci --prefix dashboard
+
       - name: Run package tests
         run: |
           npm test --prefix packages/collector
           npm test --prefix services/api-gateway
           npm test --prefix services/order-service
           npm test --prefix services/payment-service
+
+      - name: Test Cloudflare Worker and D1 integration
+        run: npm test --prefix cloudflare
+
+      - name: Lint and build dashboard
+        env:
+          VITE_PRIVATE_MVP: "true"
+        run: |
+          npm run lint --prefix dashboard
+          npm run build --prefix dashboard
+
+      - name: Validate Cloudflare Worker bundle
+        run: npm run deploy --prefix cloudflare -- --dry-run
 
       - name: Prepare production environment file
         run: cp .env.production.example .env.production

@@ -7,6 +7,7 @@ const asyncStorage = new AsyncLocalStorage();
 
 // Default max queue size: 5000 spans. Override with SDK_MAX_QUEUE_SIZE env var.
 const DEFAULT_MAX_QUEUE = 5000;
+const DEFAULT_MAX_BATCH_SIZE = 1000;
 
 class Tracer {
   /**
@@ -25,6 +26,10 @@ class Tracer {
     this.maxQueueSize   = maxQueueSize
       || Number(process.env.SDK_MAX_QUEUE_SIZE)
       || DEFAULT_MAX_QUEUE;
+    const requestedBatchSize = Number(process.env.SDK_MAX_BATCH_SIZE);
+    this.maxBatchSize = Number.isSafeInteger(requestedBatchSize) && requestedBatchSize > 0
+      ? Math.min(requestedBatchSize, DEFAULT_MAX_BATCH_SIZE)
+      : DEFAULT_MAX_BATCH_SIZE;
     this._onLog         = onLog || (() => {});  // silent by default
     this._queue         = [];
     this._flushInterval = null;
@@ -125,7 +130,7 @@ class Tracer {
   async flush() {
     if (this._queue.length === 0) return;
 
-    const batch = this._queue.splice(0);  // drain queue atomically
+    const batch = this._queue.splice(0, this.maxBatchSize);
     try {
       const axios = require('axios');
       const headers = { 'Content-Type': 'application/json' };
