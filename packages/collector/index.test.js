@@ -44,6 +44,19 @@ describe('Collector', () => {
   const internalHeaders = { 'x-api-key': 'secret-key' };
   const userHeaders = { 'x-api-key': 'lntr_project-key' };
 
+  function makeSpan(overrides = {}) {
+    return {
+      spanId: 's1',
+      traceId: 't1',
+      name: 'test',
+      serviceName: 'svc',
+      status: 'ok',
+      startTime: 1,
+      duration: 1,
+      ...overrides,
+    };
+  }
+
   // ── Health ────────────────────────────────────────────────────────────────
   describe('GET /health', () => {
     it('returns status ok with version and timestamp', async () => {
@@ -62,7 +75,7 @@ describe('Collector', () => {
       const res = await request(app)
         .post('/spans')
         .set(internalHeaders)
-        .send({ spans: [{ spanId: 's1', traceId: 't1', name: 'test', serviceName: 'svc' }] });
+        .send({ spans: [makeSpan()] });
       expect(res.statusCode).toBe(200);
       expect(res.body.received).toBe(1);
       expect(pushSpans).toHaveBeenCalledWith([
@@ -94,6 +107,30 @@ describe('Collector', () => {
       expect(res.body.error).toMatch(/batch too large/i);
     });
 
+    it('returns 400 and skips quota and queue for malformed spans', async () => {
+      const { reserveProjectSpanQuota } = require('./db');
+      const { pushSpans } = require('./queue');
+      const res = await request(app)
+        .post('/spans')
+        .set(internalHeaders)
+        .send({ spans: [makeSpan({ traceId: undefined }), makeSpan({ spanId: '' })] });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toMatch(/invalid/i);
+      expect(reserveProjectSpanQuota).not.toHaveBeenCalled();
+      expect(pushSpans).not.toHaveBeenCalled();
+    });
+
+    it('returns 400 for spans with oversized tags or logs', async () => {
+      const res = await request(app)
+        .post('/spans')
+        .set(internalHeaders)
+        .send({ spans: [makeSpan({ tags: { blob: 'x'.repeat(33 * 1024) } })] });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toMatch(/invalid/i);
+    });
+
     it('returns retryable 503 when the stream is at capacity', async () => {
       const { pushSpans, StreamCapacityError } = require('./queue');
       pushSpans.mockRejectedValueOnce(new StreamCapacityError());
@@ -101,7 +138,7 @@ describe('Collector', () => {
       const res = await request(app)
         .post('/spans')
         .set(internalHeaders)
-        .send({ spans: [{ spanId: 's1', traceId: 't1', name: 'test', serviceName: 'svc' }] });
+        .send({ spans: [makeSpan()] });
 
       expect(res.statusCode).toBe(503);
       expect(res.headers['retry-after']).toBe('5');
@@ -112,7 +149,7 @@ describe('Collector', () => {
       process.env.COLLECTOR_API_KEY = 'secret-key';
       const res = await request(app)
         .post('/spans')
-        .send({ spans: [{ spanId: 's1' }] });
+        .send({ spans: [makeSpan()] });
       expect(res.statusCode).toBe(401);
     });
 
@@ -121,7 +158,7 @@ describe('Collector', () => {
       const res = await request(app)
         .post('/spans')
         .set('x-api-key', 'secret-key')
-        .send({ spans: [{ spanId: 's1', traceId: 't1', name: 'test', serviceName: 'svc' }] });
+        .send({ spans: [makeSpan()] });
       expect(res.statusCode).toBe(200);
     });
 
@@ -130,7 +167,7 @@ describe('Collector', () => {
       const res = await request(app)
         .post('/spans')
         .set('x-api-key', 'invalid-key')
-        .send({ spans: [{ spanId: 's1' }] });
+        .send({ spans: [makeSpan()] });
       expect(res.statusCode).toBe(401);
       expect(pushSpans).not.toHaveBeenCalled();
     });
@@ -144,7 +181,7 @@ describe('Collector', () => {
       const res = await request(app)
         .post('/spans')
         .set(userHeaders)
-        .send({ spans: [{ spanId: 's1', traceId: 't1', projectId: 'prj_customer_b' }] });
+        .send({ spans: [makeSpan({ projectId: 'prj_customer_b' })] });
       expect(res.statusCode).toBe(200);
       expect(getProjectIdForIngestKey).toHaveBeenCalledWith(
         crypto.createHash('sha256').update(key).digest('hex')
@@ -163,7 +200,7 @@ describe('Collector', () => {
       const res = await request(app)
         .post('/spans')
         .set(userHeaders)
-        .send({ spans: [{ spanId: 's1' }] });
+        .send({ spans: [makeSpan()] });
 
       expect(res.statusCode).toBe(429);
       expect(res.body.code).toBe('MONTHLY_SPAN_LIMIT_EXCEEDED');
@@ -180,7 +217,7 @@ describe('Collector', () => {
       const res = await request(app)
         .post('/spans')
         .set(userHeaders)
-        .send({ spans: [{ spanId: 's1' }] });
+        .send({ spans: [makeSpan()] });
 
       expect(res.statusCode).toBe(503);
       expect(res.body.error).toMatch(/quota is temporarily unavailable/i);
@@ -197,7 +234,7 @@ describe('Collector', () => {
       const res = await request(app)
         .post('/spans')
         .set(userHeaders)
-        .send({ spans: [{ spanId: 's1' }] });
+        .send({ spans: [makeSpan()] });
 
       expect(res.statusCode).toBe(503);
       expect(releaseProjectSpanQuota).toHaveBeenCalledWith('prj_customer_a', 1);

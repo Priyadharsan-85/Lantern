@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "jest --runTestsByPath capacity.test.js queue.test.js processor.test.js db.test.js index.test.js --forceExit"
+    "test": "jest --runTestsByPath capacity.test.js queue.test.js processor.test.js db.test.js validate.test.js index.test.js --forceExit"
   },
   "keywords": [],
   "author": "",

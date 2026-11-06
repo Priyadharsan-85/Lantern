@@ -23,7 +23,17 @@ describe('span ingestion backpressure', () => {
     const response = await request(app)
       .post('/spans')
       .set('x-api-key', 'capacity-test-key')
-      .send({ spans: [{ spanId: 'span-1', traceId: 'trace-1' }] });
+      .send({
+        spans: [{
+          spanId: 'span-1',
+          traceId: 'trace-1',
+          name: 'GET /',
+          serviceName: 'svc',
+          status: 'ok',
+          startTime: 1,
+          duration: 1,
+        }],
+      });
 
     expect(response.status).toBe(503);
     expect(response.headers['retry-after']).toBe('5');

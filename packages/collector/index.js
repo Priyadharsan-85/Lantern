@@ -16,6 +16,7 @@ const {
   getTraces,
   getTraceById,
 } = require('./db');
+const { validateSpan }            = require('./validate');
 const logger                     = require('./logger');
 
 // ── Startup validation ─────────────────────────────────────────────────────────
@@ -162,6 +163,9 @@ app.post('/spans', spansLimiter, ingestProjectAuth, async (req, res) => {
   }
   if (spans.length > 1000) {
     return res.status(400).json({ error: 'batch too large — max 1000 spans per request' });
+  }
+  if (!spans.every(validateSpan)) {
+    return res.status(400).json({ error: 'one or more spans are invalid' });
   }
 
   let quotaReserved = false;
