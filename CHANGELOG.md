@@ -40,4 +40,9 @@ Initial public release.
   2026-11-07 against `lantern-tracing.gpriyadharsan789.workers.dev`.
 - Docker production tracing smoke test runs in CI against the Compose stack.
 
+### Security
+
+- Updated `body-parser` to 2.4.0 and `follow-redirects` to 1.16.2 to resolve
+  high-severity production dependency advisories.
+
 [1.0.0]: https://github.com/Priyadharsan-85/Lantern/releases/tag/v1.0.0
