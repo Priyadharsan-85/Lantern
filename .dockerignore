@@ -5,6 +5,7 @@ node_modules
 dashboard/node_modules
 packages/*/node_modules
 services/*/node_modules
+cloudflare/node_modules
 # Exclude test files from production image
 **/*.test.js
 **/__tests__

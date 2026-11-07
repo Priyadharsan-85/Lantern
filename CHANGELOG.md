@@ -44,5 +44,7 @@ Initial public release.
 
 - Updated `body-parser` to 2.4.0 and `follow-redirects` to 1.16.2 to resolve
   high-severity production dependency advisories.
+- Excluded the Cloudflare Worker's development dependencies from the production
+  application image so the image vulnerability scan stays clean.
 
 [1.0.0]: https://github.com/Priyadharsan-85/Lantern/releases/tag/v1.0.0
