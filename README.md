@@ -206,6 +206,8 @@ addressing those gaps and reviewing the hosting limits.
 | `examples/node-backend/` | Small instrumented Node backend for demos |
 | `docs/` | Production operations, tenancy, and deployment guides |
 | `.github/workflows/` | CI, CodeQL, and dependency review |
+| `CHANGELOG.md` | Release history |
+| `SECURITY.md` | Vulnerability reporting policy |
 
 ## Resume / portfolio wording
 
@@ -219,3 +221,8 @@ deployment.
   sessions, idempotent ingestion, per-project quotas, and scheduled retention.
 - Added automated Worker/D1 integration tests and CI checks for dashboard lint,
   production assets, and Worker bundle validation.
+
+## License
+
+Lantern is released under the [MIT License](LICENSE). See [CHANGELOG.md](CHANGELOG.md)
+for release history and [SECURITY.md](SECURITY.md) for vulnerability reporting.
