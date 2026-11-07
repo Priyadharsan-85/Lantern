@@ -65,8 +65,8 @@ password recovery are deliberately disabled.
 
 The current deployment is available at
 https://lantern-tracing.gpriyadharsan789.workers.dev. Its dashboard and health
-endpoint respond over HTTPS. Verify sign-in and trace ingestion with the hosted
-smoke test from the repository root:
+endpoint respond over HTTPS, and the hosted sign-in and trace-ingestion smoke
+test passed on 2026-11-07. Re-run it from the repository root:
 
 ```powershell
 $env:LANTERN_BASE_URL = "https://lantern-tracing.gpriyadharsan789.workers.dev"

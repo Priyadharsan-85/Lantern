@@ -34,9 +34,9 @@ screenshots or recordings.
   queries, rate limits, key rotation, and retention; integrated dashboard and
   Worker checks into GitHub Actions.
 
-The Cloudflare MVP is deployed, and its dashboard and health endpoint have been
-verified over HTTPS. Complete an end-to-end sign-in and trace-ingestion smoke
-test before claiming the hosted tracing flow has been verified.
+The Cloudflare MVP is deployed. Its dashboard and health endpoint have been
+verified over HTTPS, and the hosted sign-in and trace-ingestion smoke test
+passed on 2026-11-07.
 
 ## Interview topics to prepare
 

@@ -7,9 +7,10 @@ a separate Cloudflare Workers + D1 tracing MVP.
 
 > **Deployment status:** the private Cloudflare version is deployed at
 > [lantern-tracing.gpriyadharsan789.workers.dev](https://lantern-tracing.gpriyadharsan789.workers.dev).
-> The dashboard and health endpoint have been checked over HTTPS. Run the
-> hosted smoke test below to verify sign-in and trace ingestion. The original
-> Docker Compose deployment and database are untouched and remain the fallback.
+> The dashboard and health endpoint have been checked over HTTPS, and the
+> hosted sign-in and trace-ingestion smoke test passed on 2026-11-07. The
+> original Docker Compose deployment and database are untouched and remain the
+> fallback.
 
 ## What it demonstrates
 
