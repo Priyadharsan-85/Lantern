@@ -92,6 +92,7 @@ services:
       ORDER_SERVICE_URL: http://order-service:4001
       DASHBOARD_ORIGIN: ${DASHBOARD_ORIGIN:-http://localhost:8080}
       CUSTOMER_IDENTITY_SECRET: ${CUSTOMER_IDENTITY_SECRET:-local-development-customer-identity-secret}
+      SESSION_SECRET: ${SESSION_SECRET:-development-only-secret}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       NODE_ENV: development

@@ -123,6 +123,31 @@ only that project's ingest key, posts one span, and reads the trace back through
 both the trace detail and trace list APIs. It never prints the password or
 ingest key. To use a different project name, set `LANTERN_SMOKE_PROJECT`.
 
+## Run the full Docker stack in GitHub Codespaces (free)
+
+GitHub Codespaces includes a free monthly allowance and does not require a
+payment card. The repository ships a dev container with Docker-in-Docker and a
+start script:
+
+1. On GitHub, open the repository, choose **Code → Codespaces → Create codespace
+   on main**, and wait for the container to finish building.
+2. In the Codespaces terminal, run:
+
+   ```bash
+   bash scripts/codespaces-start.sh
+   ```
+
+   The script creates `.env.codespaces` with random secrets, builds and starts
+   PostgreSQL, Redis, the collector, gateway, order/payment services, and the
+   dashboard. It also creates a verified demo customer and prints its email and
+   password in the terminal.
+3. Open the **Ports** tab, set port **8080** to **Public**, then open its
+   forwarded URL. The dashboard and `/api` share that origin.
+
+Codespaces is on-demand: the forwarded URL stops working when the codespace
+stops (for example after the idle timeout). It is a free way to demo the full
+stack, not an always-on production host.
+
 ## Tests and checks
 
 ```powershell
