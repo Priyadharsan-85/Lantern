@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     env_file:
       - .env.production
     environment:
@@ -21,7 +21,7 @@ services:
     restart: unless-stopped
 
   migrate:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     env_file:
       - .env.production
     environment:
