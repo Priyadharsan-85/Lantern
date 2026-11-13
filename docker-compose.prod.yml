@@ -212,7 +212,7 @@ services:
     restart: unless-stopped
 
   caddy:
-    image: caddy:2.11.7-alpine
+    image: caddy:2.11.8-alpine
     env_file:
       - .env.production
     environment:
