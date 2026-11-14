@@ -9,9 +9,10 @@ Cloudflare Workers + D1 tracing MVP.
 
 ## Three-minute demo
 
-1. Open the Cloudflare tracing dashboard and sign in with the locally provisioned
-   admin credentials.
-2. Create a project and show that the ingest key is revealed once.
+1. Open the [public read-only demo](https://lantern-tracing.gpriyadharsan789.workers.dev/demo)
+   and explore its synthetic trace list, filters, and span waterfall.
+2. For the owner-only live demo, sign in with the provisioned admin credentials
+   and create a project to show that the ingest key is revealed once.
 3. Start `examples/node-backend` with the project key in its secure prompt and
    the Worker URL as `LANTERN_COLLECTOR_URL`.
 4. Send a request to `/api/hello`; point out the parent request span and child

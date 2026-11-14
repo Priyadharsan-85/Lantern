@@ -2,6 +2,7 @@ import { Component, useCallback, useEffect, useState } from 'react';
 import PulseLine from './components/PulseLine';
 import TraceRow from './components/TraceRow';
 import Waterfall from './components/Waterfall';
+import { DEMO_SPANS, DEMO_TRACES } from './demoData';
 import Shop from './Shop';
 import {
   checkCustomerSession,
@@ -213,6 +214,9 @@ function LoginScreen({ onLogin }) {
           <button className="login-mode-toggle" type="button" onClick={() => { setMode('login'); setError(null); setNotice(null); }}>
             Back to sign in
           </button>
+        )}
+        {PRIVATE_MVP && (
+          <a className="login-demo-link" href="/demo">Explore the public demo</a>
         )}
       </form>
     </main>
@@ -555,6 +559,108 @@ function AppContent() {
   );
 }
 
+function DemoContent() {
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [selectedSpans, setSelectedSpans] = useState(null);
+
+  const filtered = DEMO_TRACES.filter((trace) => {
+    if (statusFilter === 'ok' && trace.has_error) return false;
+    if (statusFilter === 'error' && !trace.has_error) return false;
+    if (!query) return true;
+    const search = query.toLowerCase();
+    return trace.services.some((service) => service.toLowerCase().includes(search)) ||
+      trace.root_span.toLowerCase().includes(search) ||
+      trace.trace_id.toLowerCase().includes(search);
+  });
+  const errorCount = DEMO_TRACES.filter((trace) => trace.has_error).length;
+  const averageDuration = Math.round(
+    DEMO_TRACES.reduce((total, trace) => total + trace.total_duration, 0) / DEMO_TRACES.length
+  );
+  const maxDuration = Math.max(...DEMO_TRACES.map((trace) => trace.total_duration), 1);
+
+  return (
+    <div className="shell">
+      <header className="topbar">
+        <div className="topbar__brand">
+          <div className="brand-mark" />
+          <span className="brand-name">lantern</span>
+          <span className="brand-tag">public demo</span>
+        </div>
+        <div className="topbar__pulse">
+          <PulseLine traces={DEMO_TRACES} />
+        </div>
+        <div className="topbar__stats">
+          <Stat label="traces" value={DEMO_TRACES.length} />
+          <Stat label="errors" value={errorCount} tone={errorCount > 0 ? 'error' : 'default'} />
+          <Stat label="avg" value={`${averageDuration}ms`} />
+          <a className="refresh-btn" href="/">Admin sign-in</a>
+        </div>
+      </header>
+
+      <main className="content">
+        <div className="demo-banner" role="note">
+          Read-only demo with synthetic sample traces. It is isolated from private account data and live ingestion.
+        </div>
+        <div className="toolbar">
+          <div className="search-field">
+            <SearchIcon />
+            <input
+              aria-label="Search demo traces"
+              placeholder="search by service, operation, or trace id"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </div>
+          <div className="filter-group" aria-label="Filter demo traces by status">
+            {['all', 'ok', 'error'].map((filter) => (
+              <button
+                key={filter}
+                className={`filter-btn ${statusFilter === filter ? 'is-active' : ''}`}
+                onClick={() => setStatusFilter(filter)}
+              >
+                {filter}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {filtered.length === 0 ? (
+          <div className="empty-state">
+            <ActivityIcon />
+            <p className="empty-state__title">No sample traces match this view</p>
+            <p className="empty-state__sub">Try another search or status filter.</p>
+          </div>
+        ) : (
+          <div className="trace-list">
+            <div className="trace-list__header">
+              <span>trace</span>
+              <span>operation</span>
+              <span>timeline</span>
+              <span>duration</span>
+              <span />
+            </div>
+            <div>
+              {filtered.map((trace) => (
+                <TraceRow
+                  key={trace.trace_id}
+                  trace={trace}
+                  maxDuration={maxDuration}
+                  onSelect={(traceId) => setSelectedSpans(DEMO_SPANS[traceId])}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+      </main>
+
+      {selectedSpans && (
+        <Waterfall spans={selectedSpans} onClose={() => setSelectedSpans(null)} />
+      )}
+    </div>
+  );
+}
+
 function Stat({ label, value, tone = 'default' }) {
   return (
     <div className="stat">
@@ -565,10 +671,14 @@ function Stat({ label, value, tone = 'default' }) {
 }
 
 export default function App() {
-  const isStorefront = window.location.pathname.replace(/\/+$/, '') === '/shop';
+  const pathname = window.location.pathname.replace(/\/+$/, '');
+  const isStorefront = pathname === '/shop';
+  const isDemo = pathname === '/demo';
   return (
     <ErrorBoundary>
-      {isStorefront && PRIVATE_MVP
+      {isDemo
+        ? <DemoContent />
+        : isStorefront && PRIVATE_MVP
         ? (
           <main className="login-screen">
             <div className="login-card">

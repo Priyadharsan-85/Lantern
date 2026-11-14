@@ -11,6 +11,10 @@ a separate Cloudflare Workers + D1 tracing MVP.
 > hosted sign-in and trace-ingestion smoke test passed on 2026-11-14. The
 > original Docker Compose deployment and database are untouched and remain the
 > fallback.
+>
+> Visitors can explore the [public read-only demo](https://lantern-tracing.gpriyadharsan789.workers.dev/demo),
+> which uses synthetic traces and has no access to the private account or live
+> ingestion.
 
 ## What it demonstrates
 

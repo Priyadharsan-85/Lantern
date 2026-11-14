@@ -71,6 +71,17 @@
   cursor: pointer;
 }
 
+.login-demo-link {
+  padding: 6px;
+  color: var(--signal);
+  text-align: center;
+  text-decoration: none;
+}
+
+.login-demo-link:hover {
+  text-decoration: underline;
+}
+
 .login-error {
   margin: 0;
   color: var(--status-error);
@@ -354,6 +365,16 @@
   background: var(--status-error-dim);
   border-color: var(--status-error);
   color: var(--status-error);
+}
+
+.demo-banner {
+  padding: 12px 14px;
+  border: 1px solid var(--border-hair);
+  border-radius: var(--radius-md);
+  color: var(--ink-mid);
+  background: var(--bg-raised);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .empty-state {

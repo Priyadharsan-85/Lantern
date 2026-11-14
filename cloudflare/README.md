@@ -68,6 +68,11 @@ https://lantern-tracing.gpriyadharsan789.workers.dev. Its dashboard and health
 endpoint respond over HTTPS, and the hosted sign-in and trace-ingestion smoke
 test passed on 2026-11-14. Re-run it from the repository root:
 
+The public, read-only sample trace explorer is available at
+https://lantern-tracing.gpriyadharsan789.workers.dev/demo. It is built with
+synthetic data in the static dashboard and does not read from D1 or expose
+private account traces.
+
 ```powershell
 $env:LANTERN_BASE_URL = "https://lantern-tracing.gpriyadharsan789.workers.dev"
 $env:LANTERN_ADMIN_EMAIL = Read-Host "Lantern admin email"
