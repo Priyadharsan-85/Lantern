@@ -12,7 +12,7 @@ a separate Cloudflare Workers + D1 tracing MVP.
 > The original Docker Compose deployment and database remain separate and
 > untouched.
 >
-> **Project status:** portfolio-ready private MVP, not a public multi-user
+> **Project status:** deployed private MVP, not a public multi-user
 > production service. Public signup, email recovery, and customer onboarding are
 > intentionally disabled.
 
@@ -41,7 +41,7 @@ requests.
 
 ```mermaid
 flowchart LR
-  Visitor["Portfolio visitor"] -->|"GET /demo"| Demo["Static React demo<br/>synthetic trace fixtures"]
+  Visitor["Public visitor"] -->|"GET /demo"| Demo["Static React demo<br/>synthetic trace fixtures"]
   Demo --> Explore["Search · filters · span waterfall"]
 
   Owner["Owner browser"] -->|"Sign-in and trace APIs"| Worker["Cloudflare Worker"]
@@ -283,18 +283,6 @@ addressing those gaps and reviewing the hosting limits.
 | `.github/workflows/` | CI, CodeQL, and dependency review |
 | `CHANGELOG.md` | Release history |
 | `SECURITY.md` | Vulnerability reporting policy |
-
-## Resume / portfolio wording
-
-Describe this accurately as a deployed, private portfolio MVP. Do not claim it
-supports public customer onboarding or has a production uptime guarantee.
-
-- Built a distributed tracing dashboard with a Node.js SDK, context propagation,
-  batched span ingestion, project-scoped API keys, and a React trace waterfall.
-- Designed a Cloudflare Workers + D1 tracing MVP with secure single-admin
-  sessions, idempotent ingestion, per-project quotas, and scheduled retention.
-- Added automated Worker/D1 integration tests and CI checks for dashboard lint,
-  production assets, and Worker bundle validation.
 
 ## License
 
