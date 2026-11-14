@@ -36,7 +36,7 @@ screenshots or recordings.
 
 The Cloudflare MVP is deployed. Its dashboard and health endpoint have been
 verified over HTTPS, and the hosted sign-in and trace-ingestion smoke test
-passed on 2026-11-07.
+passed on 2026-11-14.
 
 ## Interview topics to prepare
 

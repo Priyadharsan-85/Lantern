@@ -8,7 +8,7 @@ a separate Cloudflare Workers + D1 tracing MVP.
 > **Deployment status:** the private Cloudflare version is deployed at
 > [lantern-tracing.gpriyadharsan789.workers.dev](https://lantern-tracing.gpriyadharsan789.workers.dev).
 > The dashboard and health endpoint have been checked over HTTPS, and the
-> hosted sign-in and trace-ingestion smoke test passed on 2026-11-07. The
+> hosted sign-in and trace-ingestion smoke test passed on 2026-11-14. The
 > original Docker Compose deployment and database are untouched and remain the
 > fallback.
 
@@ -113,9 +113,15 @@ them):
 
 ```powershell
 $env:LANTERN_BASE_URL = "https://lantern-tracing.gpriyadharsan789.workers.dev"
-$env:LANTERN_ADMIN_EMAIL = "you@example.com"
-$env:LANTERN_ADMIN_PASSWORD = "<worker admin password>"
-node .\scripts\smoke-test-cloudflare.mjs
+$env:LANTERN_ADMIN_EMAIL = Read-Host "Lantern admin email"
+$securePassword = Read-Host "Lantern admin password" -AsSecureString
+$env:LANTERN_ADMIN_PASSWORD = [System.Net.NetworkCredential]::new('', $securePassword).Password
+try {
+    node .\scripts\smoke-test-cloudflare.mjs
+} finally {
+    Remove-Item Env:LANTERN_BASE_URL, Env:LANTERN_ADMIN_EMAIL, Env:LANTERN_ADMIN_PASSWORD -ErrorAction SilentlyContinue
+    $securePassword = $null
+}
 ```
 
 The script signs in, reuses or creates a `hosted-smoke-test` project, rotates
