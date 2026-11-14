@@ -2,7 +2,7 @@
 // End-to-end smoke test for a deployed Lantern Cloudflare Worker.
 //
 // Usage (PowerShell):
-//   $env:LANTERN_BASE_URL = "https://lantern-tracing.gpriyadharsan789.workers.dev"
+//   $env:LANTERN_BASE_URL = "https://lantern-tracing.lantern-observability.workers.dev"
 //   $env:LANTERN_ADMIN_EMAIL = "you@example.com"
 //   $env:LANTERN_ADMIN_PASSWORD = "<worker admin password>"
 //   node ./scripts/smoke-test-cloudflare.mjs

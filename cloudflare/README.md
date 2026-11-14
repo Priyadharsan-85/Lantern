@@ -64,17 +64,21 @@ password recovery are deliberately disabled.
 ## Deployment
 
 The current deployment is available at
-https://lantern-tracing.gpriyadharsan789.workers.dev. Its dashboard and health
-endpoint respond over HTTPS, and the hosted sign-in and trace-ingestion smoke
-test passed on 2026-11-14. Re-run it from the repository root:
+https://lantern-tracing.lantern-observability.workers.dev. Its dashboard and
+health endpoint respond over HTTPS, and the hosted sign-in and trace-ingestion
+smoke test passed on 2026-11-14.
 
+### Public demo
 The public, read-only sample trace explorer is available at
-https://lantern-tracing.gpriyadharsan789.workers.dev/demo. It is built with
+https://lantern-tracing.lantern-observability.workers.dev/demo. It is built with
 synthetic data in the static dashboard and does not read from D1 or expose
 private account traces.
 
+### Re-run the hosted smoke test
+From the repository root, use the Worker URL and provisioned admin credentials:
+
 ```powershell
-$env:LANTERN_BASE_URL = "https://lantern-tracing.gpriyadharsan789.workers.dev"
+$env:LANTERN_BASE_URL = "https://lantern-tracing.lantern-observability.workers.dev"
 $env:LANTERN_ADMIN_EMAIL = Read-Host "Lantern admin email"
 $securePassword = Read-Host "Lantern admin password" -AsSecureString
 $env:LANTERN_ADMIN_PASSWORD = [System.Net.NetworkCredential]::new('', $securePassword).Password

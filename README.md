@@ -5,16 +5,16 @@ collector, and a React dashboard helps inspect traces, service calls, timing,
 and errors. The repository includes the original Docker Compose application and
 a separate Cloudflare Workers + D1 tracing MVP.
 
-> **Deployment status:** the private Cloudflare version is deployed at
-> [lantern-tracing.gpriyadharsan789.workers.dev](https://lantern-tracing.gpriyadharsan789.workers.dev).
-> The dashboard and health endpoint have been checked over HTTPS, and the
-> hosted sign-in and trace-ingestion smoke test passed on 2026-11-14. The
-> original Docker Compose deployment and database are untouched and remain the
-> fallback.
+> **Live demo:** [Open Lantern's read-only trace demo](https://lantern-tracing.lantern-observability.workers.dev/demo).
+> It uses synthetic sample traces. The private Cloudflare app is deployed at
+> [lantern-tracing.lantern-observability.workers.dev](https://lantern-tracing.lantern-observability.workers.dev);
+> its health endpoint and hosted sign-in/trace-ingestion smoke test have passed.
+> The original Docker Compose deployment and database remain separate and
+> untouched.
 >
-> Visitors can explore the [public read-only demo](https://lantern-tracing.gpriyadharsan789.workers.dev/demo),
-> which uses synthetic traces and has no access to the private account or live
-> ingestion.
+> **Project status:** portfolio-ready private MVP, not a public multi-user
+> production service. Public signup, email recovery, and customer onboarding are
+> intentionally disabled.
 
 ## What it demonstrates
 
@@ -33,14 +33,54 @@ tracing MVP; they remain in the Docker application.
 
 ## Architecture
 
-```text
-Instrumented Node.js service
-        │  HTTPS POST /spans + project ingest key
-        ▼
-Cloudflare Worker ─────── React/Vite static dashboard
-        │
-        ├── D1: customers, sessions, projects, spans, trace summaries, quotas
-        └── Daily scheduled cleanup for expired traces
+The public demo is deliberately isolated from private account data. Its sample
+traces are bundled as static frontend data; the demo makes no API or database
+requests.
+
+### Deployed Cloudflare MVP
+
+```mermaid
+flowchart LR
+  Visitor["Portfolio visitor"] -->|"GET /demo"| Demo["Static React demo<br/>synthetic trace fixtures"]
+  Demo --> Explore["Search · filters · span waterfall"]
+
+  Owner["Owner browser"] -->|"Sign-in and trace APIs"| Worker["Cloudflare Worker"]
+  Service["Instrumented Node.js service<br/>Lantern SDK"] -->|"HTTPS POST /spans<br/>project ingest key"| Worker
+  Worker --> D1[("Cloudflare D1<br/>projects · spans · summaries · quotas")]
+  Cron["Daily retention trigger"] --> D1
+  Worker --> Assets["React/Vite dashboard assets"]
+  Owner --> Assets
+  classDef publicFlow fill:#e8f4ff,stroke:#2b6cb0,stroke-width:1.5px,color:#1a365d
+  classDef privateFlow fill:#fff4db,stroke:#b7791f,stroke-width:1.5px,color:#4a3410
+  classDef storage fill:#e6fffa,stroke:#2c7a7b,stroke-width:1.5px,color:#234e52
+  class Visitor,Demo,Explore publicFlow
+  class Owner,Service,Worker privateFlow
+  class D1,Cron,Assets storage
+```
+
+The original multi-service application remains available for local development
+and is not part of the Cloudflare deployment:
+
+### Original Docker Compose application
+
+```mermaid
+flowchart LR
+  Browser["Browser"] -->|"port 8080"| Dashboard["React dashboard<br/>Nginx"]
+  Dashboard -->|"/api"| Gateway["Node API gateway"]
+  Gateway --> Orders["Order service"]
+  Orders --> Payments["Payment service"]
+  SDK["Node.js app + Lantern SDK"] --> Collector["Span collector"]
+  Gateway --> Collector
+  Collector --> Redis[("Redis Streams")]
+  Collector --> Postgres[("PostgreSQL")]
+  Orders --> Postgres
+  Payments --> Postgres
+  classDef entry fill:#e8f4ff,stroke:#2b6cb0,stroke-width:1.5px,color:#1a365d
+  classDef service fill:#fff4db,stroke:#b7791f,stroke-width:1.5px,color:#4a3410
+  classDef storage fill:#e6fffa,stroke:#2c7a7b,stroke-width:1.5px,color:#234e52
+  class Browser,Dashboard entry
+  class Gateway,Orders,Payments,SDK,Collector service
+  class Redis,Postgres storage
 ```
 
 Ingestion keys are stored as SHA-256 hashes. Dashboard sessions use secure,
@@ -116,7 +156,7 @@ Use the Worker URL and the provisioned admin credentials (never commit or share
 them):
 
 ```powershell
-$env:LANTERN_BASE_URL = "https://lantern-tracing.gpriyadharsan789.workers.dev"
+$env:LANTERN_BASE_URL = "https://lantern-tracing.lantern-observability.workers.dev"
 $env:LANTERN_ADMIN_EMAIL = Read-Host "Lantern admin email"
 $securePassword = Read-Host "Lantern admin password" -AsSecureString
 $env:LANTERN_ADMIN_PASSWORD = [System.Net.NetworkCredential]::new('', $securePassword).Password
@@ -176,7 +216,7 @@ idempotent ingestion, quotas, retention, validation, and login throttling.
 ## Cloudflare deployment
 
 The private tracing MVP is deployed at
-https://lantern-tracing.gpriyadharsan789.workers.dev. The free plan has quotas
+https://lantern-tracing.lantern-observability.workers.dev. The free plan has quotas
 and no production uptime guarantee; account signup or verification requirements
 can vary. Check current Cloudflare requirements before relying on the app for
 real users or data.
@@ -246,9 +286,8 @@ addressing those gaps and reviewing the hosting limits.
 
 ## Resume / portfolio wording
 
-Use only claims that match the version you have actually demonstrated. Before
-publicly claiming a live deployment, complete and document the Cloudflare
-deployment.
+Describe this accurately as a deployed, private portfolio MVP. Do not claim it
+supports public customer onboarding or has a production uptime guarantee.
 
 - Built a distributed tracing dashboard with a Node.js SDK, context propagation,
   batched span ingestion, project-scoped API keys, and a React trace waterfall.

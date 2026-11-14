@@ -37,7 +37,7 @@ Initial public release.
 ### Verified
 
 - Hosted Cloudflare sign-in and trace-ingestion smoke test passed on
-  2026-11-07 against `lantern-tracing.gpriyadharsan789.workers.dev`.
+  2026-11-07 against the then-current `workers.dev` deployment.
 - Docker production tracing smoke test runs in CI against the Compose stack.
 
 ### Security
